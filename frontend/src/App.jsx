@@ -55,18 +55,46 @@ async function hashSourceDrafts(drafts = EMPTY_SOURCE, firLanguage = "en") {
     .join("");
 }
 
-async function apiFetch(path, options = {}, session) {
-  const response = await fetch(`${API}${path}`, {
-    ...options,
-    headers: {
-      Accept: "application/json",
-      ...(options.body ? { "Content-Type": "application/json" } : {}),
-      ...(session?.access_token
-        ? { Authorization: `Bearer ${session.access_token}` }
-        : {}),
-      ...(options.headers || {}),
-    },
-  });
+async function getUsableSession(preferredSession = null) {
+  if (preferredSession?.access_token) return preferredSession;
+
+  const { data } = await supabase.auth.getSession();
+  return data?.session || null;
+}
+
+async function apiFetch(path, options = {}, session, retryOn401 = true) {
+  const activeSession = await getUsableSession(session);
+
+  const makeRequest = (requestSession) =>
+    fetch(`${API}${path}`, {
+      ...options,
+      headers: {
+        Accept: "application/json",
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(requestSession?.access_token
+          ? { Authorization: `Bearer ${requestSession.access_token}` }
+          : {}),
+        ...(options.headers || {}),
+      },
+    });
+
+  let response = await makeRequest(activeSession);
+
+  // During login/token refresh, React state can briefly contain the previous
+  // session (or no session) even though Supabase already has a fresh one.
+  // A single retry with a freshly refreshed token prevents transient 401s
+  // from breaking persisted-investigation loading.
+  if (response.status === 401 && retryOn401) {
+    try {
+      const refreshed = await supabase.auth.refreshSession();
+      const refreshedSession = refreshed?.data?.session;
+      if (refreshedSession?.access_token) {
+        response = await makeRequest(refreshedSession);
+      }
+    } catch {
+      // Fall through to the normal HTTP error below.
+    }
+  }
 
   const text = await response.text();
   let data = null;
@@ -82,9 +110,7 @@ async function apiFetch(path, options = {}, session) {
         ? data.detail
         : JSON.stringify(data?.detail || data);
 
-    throw new Error(
-      `HTTP ${response.status}: ${detail}`
-    );
+    throw new Error(`HTTP ${response.status}: ${detail}`);
   }
   return data;
 }
@@ -100,6 +126,7 @@ export default function App() {
   const [fullName, setFullName] = useState("");
   const [isSignup, setIsSignup] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
+  const [busyMessage, setBusyMessage] = useState("");
 
   const [investigations, setInvestigations] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -117,6 +144,8 @@ export default function App() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [sourceSaveStatus, setSourceSaveStatus] = useState("Saved");
+  const sourceHydratedRef = useRef(false);
+  const hydratedCaseRef = useRef(null);
 
   const [firText, setFirText] = useState("");
   const [firEntities, setFirEntities] = useState([]);
@@ -140,6 +169,9 @@ export default function App() {
   const [analysisStale, setAnalysisStale] = useState(false);
   const graphRef = useRef(null);
   const sourceSaveTimerRef = useRef(null);
+  const sourceDraftsRef = useRef({ ...EMPTY_SOURCE });
+  const sourceLanguageRef = useRef("en");
+  const sourceSaveInFlightRef = useRef(Promise.resolve());
   const restoringCaseRef = useRef(false);
   // Tracks whose session is currently active so the auth listener below can
   // tell "same investigator, token silently refreshed" apart from "a
@@ -158,7 +190,7 @@ export default function App() {
         if (!mounted) return;
         setSession(currentSession);
         sessionUserIdRef.current = currentSession?.user?.id || null;
-        if (currentSession) await loadProfile(currentSession.user.id);
+        if (currentSession) await loadProfile(currentSession.user.id, currentSession);
       } catch (err) {
         if (mounted) setError(err.message || "Unable to initialize application.");
       } finally {
@@ -200,7 +232,7 @@ export default function App() {
         setInvestigations([]);
         setSelected(null);
         resetCaseState();
-        setTimeout(() => loadProfile(nextSession.user.id), 0);
+        setTimeout(() => loadProfile(nextSession.user.id, nextSession), 0);
       }
       // Same investigator, just a refreshed token: nothing else resets,
       // so the active investigation, drafts, analysis and graph survive
@@ -213,7 +245,7 @@ export default function App() {
     };
   }, []);
 
-  async function loadProfile(userId) {
+  async function loadProfile(userId, activeSession = session) {
     try {
       const { data, error: profileError } = await supabase
         .from("profiles")
@@ -222,20 +254,36 @@ export default function App() {
         .maybeSingle();
       if (profileError) throw profileError;
       setProfile(data);
-      if (data?.is_authorized) await loadInvestigations();
+      if (data?.is_authorized) await loadInvestigations(activeSession);
     } catch (err) {
       setError(err.message || "Unable to load profile.");
     }
   }
 
-  async function loadInvestigations() {
-    const { data, error: investigationsError } = await supabase
-      .from("investigations")
-      .select("*")
-      .order("created_at", { ascending: false });
-    if (investigationsError) throw investigationsError;
+  async function loadInvestigations(activeSession = session) {
+    // Resolve the current Supabase session at call time so a login/token
+    // refresh cannot leave this request carrying an old or empty token.
+    const usableSession = await getUsableSession(activeSession);
+    if (!usableSession?.access_token) {
+      throw new Error("Access token required");
+    }
+
+    // Investigation lists are loaded through the authenticated backend rather
+    // than a broad Supabase SELECT. The backend filters by created_by so one
+    // investigator can never see another investigator's case list.
+    const data = await apiFetch("/api/investigations", {}, usableSession);
     setInvestigations(data || []);
-    if (data?.length && !selected) setSelected(data[0]);
+
+    // Drop the previously selected case when switching accounts.
+    const first = (data || [])[0];
+    if (first) {
+      setSelected((current) => {
+        const stillVisible = current && (data || []).some((item) => item.id === current.id);
+        return stillVisible ? current : first;
+      });
+    } else {
+      setSelected(null);
+    }
   }
 
   async function handleAuth(event) {
@@ -246,6 +294,7 @@ export default function App() {
       return;
     }
     setAuthLoading(true);
+    setBusyMessage(isSignup ? "Creating secure account…" : "Signing you in securely…");
     try {
       if (isSignup) {
         const { data, error: signUpError } = await supabase.auth.signUp({
@@ -264,16 +313,29 @@ export default function App() {
         });
         if (signInError) throw signInError;
         if (data.session) {
+          sessionUserIdRef.current = data.session.user.id;
           setSession(data.session);
-          await loadProfile(data.session.user.id);
+          // Always pass the fresh sign-in session. React state updates are
+          // asynchronous, so relying on `session` here can briefly send an
+          // empty/stale access token during the first post-login requests.
+          await loadProfile(data.session.user.id, data.session);
         }
       }
     } catch (err) {
       setError(err.message || "Authentication failed.");
     } finally {
       setAuthLoading(false);
+      setBusyMessage("");
     }
   }
+
+  useEffect(() => {
+    sourceDraftsRef.current = sourceDrafts;
+  }, [sourceDrafts]);
+
+  useEffect(() => {
+    sourceLanguageRef.current = sourceLanguage;
+  }, [sourceLanguage]);
 
   function resetCaseState() {
     setAnalysis(null);
@@ -357,7 +419,8 @@ export default function App() {
 
   async function analyzeSourcesForExistingCase() {
     if (!selected) return;
-    const filled = SOURCE_TYPES.filter((source) => sourceDrafts[source.key]?.trim());
+    const latestDrafts = { ...sourceDraftsRef.current };
+    const filled = SOURCE_TYPES.filter((source) => latestDrafts[source.key]?.trim());
     if (filled.length === 0) {
       setError("Add at least one source before running analysis.");
       return;
@@ -368,10 +431,10 @@ export default function App() {
       const sources = filled.map((source) => ({
         source_type: source.key,
         title: source.label,
-        content: sourceDrafts[source.key],
+        content: latestDrafts[source.key],
         language: source.key === "FIR" ? sourceLanguage : "en",
       }));
-      await saveSourcesForInvestigation(selected.id, sourceDrafts, sourceLanguage);
+      await saveSourcesForInvestigation(selected.id, latestDrafts, sourceLanguageRef.current);
 
       const result = await apiFetch(
         `/api/investigations/${selected.id}/analyze-sources`,
@@ -518,44 +581,99 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!selected || !session?.access_token) return;
+    if (!selected) return;
 
     let cancelled = false;
 
     async function loadPersistedCase() {
       restoringCaseRef.current = true;
+      sourceHydratedRef.current = false;
+      hydratedCaseRef.current = null;
       setSourceSaveStatus("Loading saved case…");
 
+      // Clear only the source editor/selection for the newly opened case.
+      // Do NOT clear persisted analysis here; it will be replaced after the
+      // authenticated workspace response arrives.
+      setSourceDrafts({ ...EMPTY_SOURCE });
+      setSourceLanguage("en");
+      setEditingSources({});
+
       try {
-        const [sourceResult, analysisResult] = await Promise.all([
-          apiFetch(`/api/investigations/${selected.id}/sources`, {}, session),
-          apiFetch(`/api/investigations/${selected.id}/analysis`, {}, session),
-        ]);
+        // Resolve the current session at request time. This avoids the login
+        // race where the selected investigation is rendered before React has
+        // committed the fresh access token into component state.
+        const usableSession = await getUsableSession();
+        if (!usableSession?.access_token) {
+          throw new Error("Access token required");
+        }
+
+        const workspace = await apiFetch(
+          `/api/investigations/${selected.id}/workspace`,
+          {},
+          usableSession
+        );
 
         if (cancelled) return;
+
+        // One authenticated workspace request is the source of truth after
+        // login: investigation metadata + raw source text + persisted graph +
+        // last analysis. This prevents separate requests from racing while
+        // Supabase is restoring the session.
+        const analysisResult = workspace || {};
+        let persistedSources = Array.isArray(workspace?.sources)
+          ? workspace.sources
+          : [];
+
+        // Compatibility fallback for an older backend response shape.
+        if (!persistedSources.length) {
+          const fallback = await apiFetch(
+            `/api/investigations/${selected.id}/sources`,
+            {},
+            usableSession
+          ).catch(() => null);
+          if (Array.isArray(fallback)) persistedSources = fallback;
+          else if (Array.isArray(fallback?.sources)) persistedSources = fallback.sources;
+        }
+
+        console.debug(
+          "Loaded persisted investigation workspace",
+          selected.id,
+          "sources:",
+          persistedSources.length,
+          "nodes:",
+          workspace?.graph?.nodes?.length || 0,
+          "links:",
+          workspace?.graph?.links?.length || 0
+        );
 
         const drafts = { ...EMPTY_SOURCE };
         let firLanguage = "en";
 
-        // The API may return either { sources: [...] } or the raw array.
-        // Support both so every saved intelligence record is restored after
-        // logout/login and becomes editable again.
-        const persistedSources = Array.isArray(sourceResult)
-          ? sourceResult
-          : (sourceResult?.sources || []);
-
         persistedSources.forEach((source) => {
-          const sourceType = String(source?.source_type || "").trim().toUpperCase();
+          const sourceType = String(
+            source?.source_type ?? source?.type ?? ""
+          ).trim().toUpperCase();
+          const content =
+            source?.content ??
+            source?.raw_text ??
+            source?.text ??
+            source?.body ??
+            "";
+
           if (Object.prototype.hasOwnProperty.call(drafts, sourceType)) {
-            drafts[sourceType] = source?.content || "";
+            drafts[sourceType] = String(content || "");
           }
           if (sourceType === "FIR" && source?.language) {
             firLanguage = source.language;
           }
         });
 
+        sourceDraftsRef.current = drafts;
+        sourceLanguageRef.current = firLanguage;
         setSourceDrafts(drafts);
         setSourceLanguage(firLanguage);
+        sourceHydratedRef.current = true;
+        hydratedCaseRef.current = selected.id;
 
         const persistedGraph = analysisResult?.graph || { nodes: [], links: [] };
         setAnalysisGraph(persistedGraph);
@@ -564,7 +682,8 @@ export default function App() {
         setSelectedRelationship(null);
 
         setAnalysis(
-          analysisResult?.analysis_run ||
+          analysisResult?.sources?.length ||
+          analysisResult?.candidate_relationships?.length ||
           persistedGraph.nodes.length ||
           persistedGraph.links.length
             ? analysisResult
@@ -572,21 +691,15 @@ export default function App() {
         );
 
         const savedHash = analysisResult?.source_snapshot_hash;
-        const currentHash = await hashSourceDrafts(
-          drafts,
-          firLanguage
-        );
-
-        setAnalysisStale(
-          Boolean(
-            savedHash &&
-            currentHash &&
-            savedHash !== currentHash
-          )
-        );
+        const currentHash = await hashSourceDrafts(drafts, firLanguage);
+        setAnalysisStale(Boolean(savedHash && currentHash && savedHash !== currentHash));
 
         setEditingSources({});
-        setSourceSaveStatus("Saved");
+        setSourceSaveStatus(
+          persistedSources.some((source) => String(source?.content || "").trim())
+            ? "Saved"
+            : "No saved source data"
+        );
       } catch (err) {
         if (!cancelled) {
           console.warn("Saved case load failed:", err.message);
@@ -602,32 +715,47 @@ export default function App() {
     return () => { cancelled = true; };
   }, [selected?.id, session?.access_token]);
 
-  async function saveSourcesForInvestigation(investigationId, drafts = sourceDrafts, firLanguage = sourceLanguage) {
-    if (!investigationId || !session?.access_token) return;
+  async function saveSourcesForInvestigation(investigationId, drafts = sourceDraftsRef.current, firLanguage = sourceLanguageRef.current) {
+    if (!investigationId) return;
 
+    const snapshot = { ...EMPTY_SOURCE, ...(drafts || {}) };
     const sources = SOURCE_TYPES.map((source) => ({
       source_type: source.key,
       title: source.label,
-      content: drafts[source.key] || "",
-      language: source.key === "FIR" ? firLanguage : "en",
+      content: String(snapshot[source.key] || ""),
+      language: source.key === "FIR" ? (firLanguage || "en") : "en",
     }));
 
-    setSourceSaveStatus("Saving…");
-    await apiFetch(
-      `/api/investigations/${investigationId}/sources`,
-      { method: "PUT", body: JSON.stringify({ sources }) },
-      session
-    );
-    setSourceSaveStatus("Saved");
+    sourceSaveInFlightRef.current = sourceSaveInFlightRef.current
+      .catch(() => {})
+      .then(async () => {
+        setSourceSaveStatus("Saving…");
+        const activeSession = await getUsableSession(session);
+        if (!activeSession?.access_token) throw new Error("Access token required");
+        await apiFetch(
+          `/api/investigations/${investigationId}/sources`,
+          { method: "PUT", body: JSON.stringify({ sources }) },
+          activeSession
+        );
+        setSourceSaveStatus("Saved");
+      });
+
+    return sourceSaveInFlightRef.current;
   }
 
   useEffect(() => {
-    if (!selected?.id || !session?.access_token || restoringCaseRef.current) return;
+    if (
+      !selected?.id ||
+      !session?.access_token ||
+      restoringCaseRef.current ||
+      !sourceHydratedRef.current ||
+      hydratedCaseRef.current !== selected.id
+    ) return;
 
     if (sourceSaveTimerRef.current) clearTimeout(sourceSaveTimerRef.current);
 
     sourceSaveTimerRef.current = setTimeout(() => {
-      saveSourcesForInvestigation(selected.id, sourceDrafts, sourceLanguage).catch((err) => {
+      saveSourcesForInvestigation(selected.id, sourceDraftsRef.current, sourceLanguageRef.current).catch((err) => {
         console.warn("Source autosave failed:", err.message);
         setSourceSaveStatus("Save failed");
       });
@@ -666,19 +794,35 @@ export default function App() {
   }
 
   async function signOut() {
+    setAuthLoading(true);
+    setBusyMessage("Signing you out securely…");
+    sourceHydratedRef.current = false;
+    hydratedCaseRef.current = null;
+    setError("");
     try {
-      if (selected?.id && session?.access_token) {
-        await saveSourcesForInvestigation(selected.id, sourceDrafts, sourceLanguage);
+      // Flush the current source drafts before invalidating the session.
+      if (selected?.id) {
+        const usableSession = await getUsableSession();
+        if (usableSession?.access_token) {
+          await saveSourcesForInvestigation(
+            selected.id,
+            sourceDraftsRef.current,
+            sourceLanguageRef.current
+          );
+        }
       }
+      await supabase.auth.signOut();
+      resetCaseState();
+      setSession(null);
+      setProfile(null);
+      setInvestigations([]);
+      setSelected(null);
     } catch (err) {
-      console.warn("Final save before sign out failed:", err.message);
+      setError(err.message || "Unable to sign out.");
+    } finally {
+      setAuthLoading(false);
+      setBusyMessage("");
     }
-    await supabase.auth.signOut();
-    resetCaseState();
-    setSession(null);
-    setProfile(null);
-    setInvestigations([]);
-    setSelected(null);
   }
 
   const visibleInvestigations = useMemo(() => {
@@ -753,7 +897,24 @@ export default function App() {
   }
 
   return (
-    <div className="app-shell dashboard-shell">
+    <>
+      {(authLoading || analysisLoading || creating) && (
+        <div className="global-busy-overlay" role="status" aria-live="polite">
+          <div className="global-busy-card">
+            <div className="busy-spinner" aria-hidden="true" />
+            <strong>
+              {busyMessage ||
+                (analysisLoading
+                  ? "Running intelligence analysis…"
+                  : creating
+                    ? "Creating and analyzing investigation…"
+                    : "Working securely…")}
+            </strong>
+            <span>Please wait…</span>
+          </div>
+        </div>
+      )}
+      <div className="app-shell dashboard-shell">
       <aside className="sidebar">
         <div>
           <div className="brand-row sidebar-brand">
@@ -909,20 +1070,16 @@ export default function App() {
                       value={sourceDrafts[source.key]}
                       readOnly={!editingSources[source.key]}
                       onChange={(e) => {
+                        const value = e.target.value;
+                        sourceDraftsRef.current = {
+                          ...sourceDraftsRef.current,
+                          [source.key]: value,
+                        };
                         setAnalysisStale(true);
                         setSourceDrafts((prev) => ({
                           ...prev,
-                          [source.key]: e.target.value,
+                          [source.key]: value,
                         }));
-                      }}
-                      onBlur={() => {
-                        if (selected?.id) {
-                          saveSourcesForInvestigation(
-                            selected.id,
-                            sourceDrafts,
-                            sourceLanguage
-                          ).catch(() => {});
-                        }
                       }}
                     />
 
@@ -945,6 +1102,7 @@ export default function App() {
               </div>
 
               <div className="source-actions">
+                <button className="ghost-button" onClick={() => selected && saveSourcesForInvestigation(selected.id, sourceDraftsRef.current, sourceLanguageRef.current)} disabled={analysisLoading}>Save All Sources</button>
                 <button className="primary-button" onClick={analyzeSourcesForExistingCase} disabled={analysisLoading}>
                   {analysisLoading ? "Running Intelligence Analysis…" : "Run Intelligence Analysis"}
                 </button>
@@ -1345,5 +1503,6 @@ export default function App() {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -1556,3 +1556,56 @@ textarea {
 .source-actions > span {
   line-height: 1.6;
 }
+/* NyayaNet busy/loading overlay */
+.global-busy-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 99999;
+  display: grid;
+  place-items: center;
+  background: rgba(2, 10, 18, 0.78);
+  backdrop-filter: blur(7px);
+  -webkit-backdrop-filter: blur(7px);
+}
+
+.global-busy-card {
+  width: min(380px, calc(100vw - 40px));
+  box-sizing: border-box;
+  padding: 30px;
+  border: 1px solid rgba(93, 174, 255, 0.28);
+  border-radius: 18px;
+  background: rgba(8, 23, 37, 0.97);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.48);
+  text-align: center;
+}
+
+.busy-spinner {
+  width: 40px;
+  height: 40px;
+  margin: 0 auto 16px;
+  border: 3px solid rgba(255, 255, 255, 0.14);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: nyayanet-spin 0.85s linear infinite;
+}
+
+.global-busy-card strong,
+.global-busy-card span {
+  display: block;
+}
+
+.global-busy-card strong {
+  font-size: 15px;
+}
+
+.global-busy-card span {
+  margin-top: 7px;
+  font-size: 12px;
+  opacity: 0.58;
+}
+
+@keyframes nyayanet-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

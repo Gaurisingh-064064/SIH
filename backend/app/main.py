@@ -140,6 +140,30 @@ def require_user(authorization: Optional[str]) -> str:
     return user.id
 
 
+# Verify that the authenticated investigator owns the requested investigation.
+# The backend uses the Supabase service key, so database RLS is bypassed for
+# these server-side queries; ownership must therefore also be enforced here.
+def require_investigation_owner(investigation_id: str, user_id: str):
+    investigation = (
+        supabase.table("investigations")
+        .select("id, created_by")
+        .eq("id", investigation_id)
+        .maybe_single()
+        .execute()
+    )
+
+    if not investigation.data:
+        raise HTTPException(404, "Investigation not found")
+
+    created_by = investigation.data.get("created_by")
+    if created_by != user_id:
+        # Return the same response an absent case would use so another
+        # investigator cannot discover whether a case ID exists.
+        raise HTTPException(404, "Investigation not found")
+
+    return investigation.data
+
+
 # -----------------------------------------------------------------------------
 # Generic helpers
 # -----------------------------------------------------------------------------
@@ -324,9 +348,7 @@ def predict_relationship(record: Dict[str, Any]) -> float:
 
     if RELATIONSHIP_MODEL is not None:
         try:
-            model_score = float(
-                RELATIONSHIP_MODEL.predict_proba([values])[0][1]
-            )
+            model_score = float(RELATIONSHIP_MODEL.predict_proba([values])[0][1])
         except Exception as exc:
             print("Relationship model inference failed:", exc)
             model_score = None
@@ -380,10 +402,13 @@ def predict_relationship(record: Dict[str, Any]) -> float:
     if record.get("shared_location"):
         evidence += 4.0
 
-    evidence_score = max(
-        0.0,
-        min(100.0, evidence),
-    ) / 100.0
+    evidence_score = (
+        max(
+            0.0,
+            min(100.0, evidence),
+        )
+        / 100.0
+    )
 
     # ---------------------------------------------------------
     # Combine the learned model with the evidence score.
@@ -393,10 +418,7 @@ def predict_relationship(record: Dict[str, Any]) -> float:
     if model_score is None:
         final_score = evidence_score
     else:
-        final_score = (
-            0.75 * evidence_score
-            + 0.25 * model_score
-        )
+        final_score = 0.75 * evidence_score + 0.25 * model_score
 
     return float(
         max(
@@ -496,30 +518,104 @@ def relationship_reason(record: Dict[str, Any]) -> str:
 
 
 PERSON_FALSE_POSITIVE = {
-    "age", "status", "record", "record 1", "record 2", "record 3",
-    "record 4", "record 5", "record 6", "record 7", "record 8",
-    "cyber crime", "cyber crime unit", "criminal history",
-    "criminal history database", "police", "police report",
-    "police reports", "investigation", "investigation report",
-    "investigators", "investigator", "financial fraud", "fraud",
-    "fraud facilitation", "to account", "from account",
-    "to person", "from person", "caller", "receiver", "account",
-    "amount", "date", "time", "location", "vehicle", "organization",
-    "company", "profile", "public profile", "source", "status",
-    "completed", "under investigation", "under review", "none",
+    "age",
+    "status",
+    "record",
+    "record 1",
+    "record 2",
+    "record 3",
+    "record 4",
+    "record 5",
+    "record 6",
+    "record 7",
+    "record 8",
+    "cyber crime",
+    "cyber crime unit",
+    "criminal history",
+    "criminal history database",
+    "police",
+    "police report",
+    "police reports",
+    "investigation",
+    "investigation report",
+    "investigators",
+    "investigator",
+    "financial fraud",
+    "fraud",
+    "fraud facilitation",
+    "to account",
+    "from account",
+    "to person",
+    "from person",
+    "caller",
+    "receiver",
+    "account",
+    "amount",
+    "date",
+    "time",
+    "location",
+    "vehicle",
+    "organization",
+    "company",
+    "profile",
+    "public profile",
+    "source",
+    "status",
+    "completed",
+    "under investigation",
+    "under review",
+    "none",
 }
 
 RELATIONSHIP_CUES = (
-    "met", "meet", "meeting", "meetings", "called", "call", "contacted",
-    "contact", "communication", "communicated", "spoke", "talked",
-    "messaged", "message", "interaction", "interacted", "together",
-    "partner", "friend", "family", "brother", "sister", "father",
-    "mother", "spouse", "relative", "colleague", "associate",
-    "associated", "transferred", "transfer", "transaction", "paid",
-    "payment", "sent", "received", "observed", "seen", "travelled",
-    "traveling", "travelling", "shared", "linked", "connected",
-    "arrived", "departed",
+    "met",
+    "meet",
+    "meeting",
+    "meetings",
+    "called",
+    "call",
+    "contacted",
+    "contact",
+    "communication",
+    "communicated",
+    "spoke",
+    "talked",
+    "messaged",
+    "message",
+    "interaction",
+    "interacted",
+    "together",
+    "partner",
+    "friend",
+    "family",
+    "brother",
+    "sister",
+    "father",
+    "mother",
+    "spouse",
+    "relative",
+    "colleague",
+    "associate",
+    "associated",
+    "transferred",
+    "transfer",
+    "transaction",
+    "paid",
+    "payment",
+    "sent",
+    "received",
+    "observed",
+    "seen",
+    "travelled",
+    "traveling",
+    "travelling",
+    "shared",
+    "linked",
+    "connected",
+    "arrived",
+    "departed",
 )
+
 
 def clean_person_name(value: str) -> str | None:
     value = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:-")
@@ -545,24 +641,30 @@ def clean_person_name(value: str) -> str | None:
     if any(char.isdigit() for char in value):
         return None
 
-    if any(
-        token.lower().rstrip(":,.;")
-        in PERSON_FALSE_POSITIVE
-        for token in tokens
-    ):
+    if any(token.lower().rstrip(":,.;") in PERSON_FALSE_POSITIVE for token in tokens):
         return None
 
-    if all(
-        not re.search(r"[A-Za-zÀ-ÿ]", token)
-        for token in tokens
-    ):
+    if all(not re.search(r"[A-Za-zÀ-ÿ]", token) for token in tokens):
         return None
 
     # Don't accept strings that are obviously field/category descriptions.
     category_words = {
-        "account", "amount", "status", "crime", "record", "case",
-        "reference", "date", "time", "duration", "location",
-        "police", "report", "unit", "database", "profile",
+        "account",
+        "amount",
+        "status",
+        "crime",
+        "record",
+        "case",
+        "reference",
+        "date",
+        "time",
+        "duration",
+        "location",
+        "police",
+        "report",
+        "unit",
+        "database",
+        "profile",
     }
     if sum(token.lower().strip(":,.") in category_words for token in tokens) >= 1:
         return None
@@ -609,9 +711,10 @@ def extract_people_from_source_text(
             flags=re.I,
         ):
             found.append(key)
-    return sorted(set(found), key=lambda key: text.lower().find(
-        person_profiles[key]["name"].lower()
-    ))
+    return sorted(
+        set(found),
+        key=lambda key: text.lower().find(person_profiles[key]["name"].lower()),
+    )
 
 
 def make_person_profile(
@@ -725,10 +828,7 @@ def make_person_profile(
             if not profile["bank_account"] and entities.get("BANK"):
                 profile["bank_account"] = entities["BANK"][0]
 
-        if (
-            source_type in {"CRIMINAL_HISTORY", "FIR"}
-            and not profile["crime_recorded"]
-        ):
+        if source_type in {"CRIMINAL_HISTORY", "FIR"} and not profile["crime_recorded"]:
             match = re.search(
                 rf"\b{re.escape(name)}\b[^.\n]{{0,180}}?"
                 r"(?:recorded\s+categories|crime|charges?|case\s+references?)"
@@ -837,9 +937,7 @@ def build_live_candidates(
 
                 # Only relationship-bearing records generate links.
                 lower = record_text.lower()
-                if not any(
-                    cue in lower for cue in RELATIONSHIP_CUES
-                ):
+                if not any(cue in lower for cue in RELATIONSHIP_CUES):
                     continue
 
                 if len(mentioned) == 2:
@@ -854,7 +952,9 @@ def build_live_candidates(
                             and any(
                                 cue in lower
                                 for cue in (
-                                    "meet", "meeting", "observed",
+                                    "meet",
+                                    "meeting",
+                                    "observed",
                                     "seen together",
                                 )
                             )
@@ -871,9 +971,7 @@ def build_live_candidates(
                         if lower.find(cue) >= 0
                     ]
                     cue_pos = (
-                        min(cue_positions)
-                        if cue_positions
-                        else len(record_text) // 2
+                        min(cue_positions) if cue_positions else len(record_text) // 2
                     )
 
                     before = [
@@ -881,14 +979,16 @@ def build_live_candidates(
                         for key in mentioned
                         if record_text.lower().find(
                             person_profiles[key]["name"].lower()
-                        ) < cue_pos
+                        )
+                        < cue_pos
                     ]
                     after = [
                         key
                         for key in mentioned
                         if record_text.lower().find(
                             person_profiles[key]["name"].lower()
-                        ) > cue_pos
+                        )
+                        > cue_pos
                     ]
 
                     if before and after:
@@ -896,11 +996,7 @@ def build_live_candidates(
                             before[-1],
                             after[0],
                             source_type,
-                            meetings=(
-                                1
-                                if source_type == "SURVEILLANCE"
-                                else 0
-                            ),
+                            meetings=(1 if source_type == "SURVEILLANCE" else 0),
                         )
 
         # ----------------------------------------------------------
@@ -958,11 +1054,7 @@ def build_live_candidates(
                     b_key,
                     "CDR",
                     calls=1,
-                    duration=(
-                        int(duration_match.group(1))
-                        if duration_match
-                        else 0
-                    ),
+                    duration=(int(duration_match.group(1)) if duration_match else 0),
                 )
 
         # ----------------------------------------------------------
@@ -1011,9 +1103,7 @@ def build_live_candidates(
                     "FINANCIAL",
                     transactions=1,
                     amount=(
-                        float(
-                            amount_match.group(1).replace(",", "")
-                        )
+                        float(amount_match.group(1).replace(",", ""))
                         if amount_match
                         else 0.0
                     ),
@@ -1022,9 +1112,7 @@ def build_live_candidates(
     results: List[Dict[str, Any]] = []
 
     for record in candidates.values():
-        record["source_diversity"] = len(
-            record.pop("source_types")
-        )
+        record["source_diversity"] = len(record.pop("source_types"))
         record["calls"] = record["phone_call_count"]
         record["duration"] = record["total_call_duration_sec"]
         record["transactions"] = record["transaction_count"]
@@ -1037,9 +1125,7 @@ def build_live_candidates(
         score_factors = []
 
         if int(record.get("calls") or 0) > 0:
-            score_factors.append(
-                f"{int(record['calls'])} phone call(s)"
-            )
+            score_factors.append(f"{int(record['calls'])} phone call(s)")
 
         if int(record.get("transactions") or 0) > 0:
             score_factors.append(
@@ -1081,17 +1167,11 @@ def build_live_candidates(
         meetings = int(record.get("meetings") or 0)
 
         if calls >= 3 and txns >= 1:
-            record["relationship_type"] = (
-                "Communication & Financial Association"
-            )
+            record["relationship_type"] = "Communication & Financial Association"
         elif meetings >= 1 and txns >= 1:
-            record["relationship_type"] = (
-                "Meeting & Financial Association"
-            )
+            record["relationship_type"] = "Meeting & Financial Association"
         elif meetings >= 2:
-            record["relationship_type"] = (
-                "Repeated Meeting Association"
-            )
+            record["relationship_type"] = "Repeated Meeting Association"
         elif txns >= 1:
             record["relationship_type"] = "Financial Association"
         elif calls >= 1:
@@ -1099,9 +1179,7 @@ def build_live_candidates(
         elif record.get("source_diversity", 0) >= 2:
             record["relationship_type"] = "Multi-source Association"
         else:
-            record["relationship_type"] = (
-                "Evidence-linked Association"
-            )
+            record["relationship_type"] = "Evidence-linked Association"
 
         anomaly = anomaly_result(record)
         record["suspicious"] = anomaly["is_anomaly"]
@@ -1141,9 +1219,7 @@ def build_live_graph(
         sorted(connected_keys),
         start=1,
     ):
-        key_to_id[key] = (
-            f"LIVE-{investigation_prefix}-{index:04d}"
-        )
+        key_to_id[key] = f"LIVE-{investigation_prefix}-{index:04d}"
 
     nodes = []
 
@@ -1164,9 +1240,7 @@ def build_live_graph(
                 "bank_account": profile.get("bank_account"),
                 "crime_recorded": profile.get("crime_recorded"),
                 "fir_language": profile.get("fir_language"),
-                "source_types": sorted(
-                    profile.get("source_types") or []
-                ),
+                "source_types": sorted(profile.get("source_types") or []),
             }
         )
 
@@ -1193,14 +1267,10 @@ def build_live_graph(
                 "reason": record["reason"],
                 "score_basis": record.get("score_basis", []),
                 "calls": record["phone_call_count"],
-                "total_call_duration_sec": record[
-                    "total_call_duration_sec"
-                ],
+                "total_call_duration_sec": record["total_call_duration_sec"],
                 "transactions": record["transaction_count"],
                 "meetings": record["meeting_count"],
-                "total_transaction_amount": record[
-                    "total_transaction_amount"
-                ],
+                "total_transaction_amount": record["total_transaction_amount"],
                 "suspicious": record["suspicious"],
                 "anomaly_score": record["anomaly_score"],
                 "suspicious_reasons": record["suspicious_reasons"],
@@ -1302,24 +1372,16 @@ def persist_people(
             "vehicle_num": node.get("vehicle_num"),
             "org": node.get("org"),
             "bank_account": node.get("bank_account"),
-            "crime_recorded": (
-                node.get("crime_recorded")
-                or "Source-linked subject"
-            ),
+            "crime_recorded": (node.get("crime_recorded") or "Source-linked subject"),
             "fir_language": node.get("fir_language"),
             "source_document_id": document_ids.get("FIR"),
         }
 
-        payload = {
-            key: value
-            for key, value in payload.items()
-            if value is not None
-        }
+        payload = {key: value for key, value in payload.items() if value is not None}
 
         try:
             existing = (
-                supabase
-                .table("persons")
+                supabase.table("persons")
                 .select("id")
                 .eq("investigation_id", investigation_id)
                 .eq("person_id", node["id"])
@@ -1329,8 +1391,7 @@ def persist_people(
 
             if existing.data:
                 (
-                    supabase
-                    .table("persons")
+                    supabase.table("persons")
                     .update(payload)
                     .eq("id", existing.data[0]["id"])
                     .execute()
@@ -1365,8 +1426,7 @@ def persist_relationships(
 
     try:
         (
-            supabase
-            .table("person_relationships")
+            supabase.table("person_relationships")
             .delete()
             .eq("investigation_id", investigation_id)
             .execute()
@@ -1377,10 +1437,7 @@ def persist_relationships(
             detail=f"Unable to reset investigation relationships: {exc}",
         )
 
-    node_names = {
-        node["id"]: node["name"]
-        for node in graph_data.get("nodes", [])
-    }
+    node_names = {node["id"]: node["name"] for node in graph_data.get("nodes", [])}
 
     investigation_token = re.sub(
         r"[^A-Za-z0-9]",
@@ -1426,43 +1483,29 @@ def persist_relationships(
             "ground_truth_confidence": None,
             "model_confidence": float(link.get("confidence") or 0.0),
             "relationship_type": (
-                link.get("relationship_type")
-                or "Evidence-linked Association"
+                link.get("relationship_type") or "Evidence-linked Association"
             ),
-            "relationship_description": link.get(
-                "relationship_description"
-            ),
+            "relationship_description": link.get("relationship_description"),
             "reason": link.get("reason"),
             "suspicious": bool(link.get("suspicious")),
             "anomaly_score": link.get("anomaly_score"),
         }
 
         try:
-            (
-                supabase
-                .table("person_relationships")
-                .insert(payload)
-                .execute()
-            )
+            (supabase.table("person_relationships").insert(payload).execute())
         except Exception as first_error:
             error_text = str(first_error).lower()
 
             missing_optional_column = (
                 "suspicious" in error_text
                 or "anomaly_score" in error_text
-                or (
-                    "column" in error_text
-                    and "does not exist" in error_text
-                )
+                or ("column" in error_text and "does not exist" in error_text)
             )
 
             if not missing_optional_column:
                 raise HTTPException(
                     status_code=500,
-                    detail=(
-                        "Unable to save generated relationship: "
-                        f"{first_error}"
-                    ),
+                    detail=("Unable to save generated relationship: " f"{first_error}"),
                 )
 
             legacy_payload = dict(payload)
@@ -1471,8 +1514,7 @@ def persist_relationships(
 
             try:
                 (
-                    supabase
-                    .table("person_relationships")
+                    supabase.table("person_relationships")
                     .insert(legacy_payload)
                     .execute()
                 )
@@ -1485,7 +1527,6 @@ def persist_relationships(
                         f"Retry error: {second_error}"
                     ),
                 )
-
 
 
 # -----------------------------------------------------------------------------
@@ -1503,6 +1544,21 @@ def health():
         "model_loading": "lazy_on_first_analysis",
         "analysis_mode": "live-submitted-evidence",
     }
+
+
+@app.get("/api/investigations")
+def list_investigations(
+    authorization: Optional[str] = Header(None),
+):
+    user_id = require_user(authorization)
+    result = (
+        supabase.table("investigations")
+        .select("*")
+        .eq("created_by", user_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
 
 
 @app.post("/api/investigations")
@@ -1533,7 +1589,8 @@ def close_investigation(
     investigation_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
     result = (
         supabase.table("investigations")
         .update({"status": "closed", "closed_at": utc_now()})
@@ -1545,6 +1602,134 @@ def close_investigation(
     return result.data[0]
 
 
+@app.get("/api/investigations/{investigation_id}/workspace")
+def get_investigation_workspace(
+    investigation_id: str,
+    authorization: Optional[str] = Header(None),
+):
+    """Return the complete persisted workspace for the authenticated owner.
+
+    Keeping investigation metadata, saved source text, and persisted graph/
+    analysis in one authenticated response avoids login-time races between
+    separate source and analysis requests.
+    """
+    user_id = require_user(authorization)
+    investigation = require_investigation_owner(investigation_id, user_id)
+
+    source_result = (
+        supabase.table("investigation_sources")
+        .select(
+            "id, investigation_id, source_type, title, content, language, created_at, updated_at"
+        )
+        .eq("investigation_id", investigation_id)
+        .order("source_type")
+        .execute()
+    )
+    source_rows = []
+    for row in source_result.data or []:
+        source_rows.append(
+            {
+                **row,
+                "content": (
+                    "" if row.get("content") is None else str(row.get("content"))
+                ),
+            }
+        )
+
+    persons = (
+        supabase.table("persons")
+        .select("*")
+        .eq("investigation_id", investigation_id)
+        .execute()
+        .data
+        or []
+    )
+
+    relationships = (
+        supabase.table("person_relationships")
+        .select("*")
+        .eq("investigation_id", investigation_id)
+        .execute()
+        .data
+        or []
+    )
+
+    graph_data = {
+        "nodes": [
+            {
+                "id": p["person_id"],
+                "name": p["name"],
+                "type": "PERSON",
+                "is_center": False,
+                "age": p.get("age"),
+                "location": p.get("location"),
+                "phone_num": p.get("phone_num"),
+                "vehicle_num": p.get("vehicle_num"),
+                "org": p.get("org"),
+                "bank_account": p.get("bank_account"),
+                "crime_recorded": p.get("crime_recorded"),
+                "fir_language": p.get("fir_language"),
+            }
+            for p in persons
+        ],
+        "links": [
+            {
+                "source": r["person_a_id"],
+                "target": r["person_b_id"],
+                "relationship_type": r.get("relationship_type")
+                or "Evidence-linked Association",
+                "relationship_description": r.get("relationship_description"),
+                "confidence": r.get("model_confidence"),
+                "reason": r.get("reason"),
+                "score_basis": r.get("score_basis") or [],
+                "calls": r.get("phone_call_count", 0),
+                "transactions": r.get("transaction_count", 0),
+                "meetings": r.get("meeting_count", 0),
+                "total_transaction_amount": r.get("total_transaction_amount", 0),
+                "suspicious": r.get("suspicious", False),
+                "anomaly_score": r.get("anomaly_score"),
+            }
+            for r in relationships
+        ],
+    }
+
+    latest_runs = (
+        supabase.table("analysis_runs")
+        .select(
+            "id, created_at, sources_processed, entities_extracted, candidate_links, suspicious_links, summary"
+        )
+        .eq("investigation_id", investigation_id)
+        .order("created_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    latest = latest_runs.data[0] if latest_runs.data else None
+    saved_summary = latest.get("summary", {}) if latest else {}
+
+    analytics = live_graph_analytics(graph_data)
+    return {
+        "investigation": investigation,
+        "investigation_id": investigation_id,
+        "sources": source_rows,
+        "analysis_run": latest,
+        "analysis_mode": "persisted_current_investigation",
+        "graph": graph_data,
+        **analytics,
+        "entity_counts": saved_summary.get("entity_counts", {}),
+        "candidate_relationships": saved_summary.get("top_relationships", []),
+        "suspicious_patterns": saved_summary.get("suspicious_patterns", []),
+        "influential_persons": saved_summary.get(
+            "influential_persons", analytics.get("influential_persons", [])
+        ),
+        "community_count": saved_summary.get(
+            "community_count", analytics.get("community_count", 0)
+        ),
+        "summary_text": saved_summary.get("summary_text", ""),
+        "source_snapshot_hash": saved_summary.get("source_snapshot_hash"),
+        "source_count": len(source_result.data or []),
+    }
+
+
 @app.get("/api/investigations/{investigation_id}/sources")
 def get_investigation_sources(
     investigation_id: str,
@@ -1552,19 +1737,7 @@ def get_investigation_sources(
 ):
     user_id = require_user(authorization)
 
-    investigation = (
-        supabase.table("investigations")
-        .select("id, created_by")
-        .eq("id", investigation_id)
-        .maybe_single()
-        .execute()
-    )
-
-    if not investigation.data:
-        raise HTTPException(404, "Investigation not found")
-
-    if investigation.data["created_by"] != user_id:
-        raise HTTPException(403, "You do not have access to this investigation")
+    require_investigation_owner(investigation_id, user_id)
 
     result = (
         supabase.table("investigation_sources")
@@ -1588,77 +1761,55 @@ def save_investigation_sources(
     authorization: Optional[str] = Header(None),
 ):
     user_id = require_user(authorization)
-
-    investigation = (
-        supabase.table("investigations")
-        .select("id, created_by")
-        .eq("id", investigation_id)
-        .maybe_single()
-        .execute()
-    )
-
-    if not investigation.data:
-        raise HTTPException(404, "Investigation not found")
-
-    if investigation.data["created_by"] != user_id:
-        raise HTTPException(403, "You do not have access to this investigation")
+    require_investigation_owner(investigation_id, user_id)
 
     sources = normalize_source_payload(body.get("sources"))
-    saved = []
 
+    # Persist the complete seven-source editor state in one request. Using a
+    # single bulk upsert avoids the race where several blur/autosave requests
+    # arrive out of order and an older three-source snapshot wins. Empty source
+    # rows are intentionally stored too, so the database always represents the
+    # full editor state for this investigation.
+    payload = []
     for source in sources:
         source_type = source.source_type.strip().upper()
         if not source_type:
             continue
+        payload.append(
+            {
+                "investigation_id": investigation_id,
+                "source_type": source_type,
+                "title": source.title or source_type.title(),
+                "content": source.content or "",
+                "language": source.language or "en",
+                "created_at": utc_now(),
+                "updated_at": utc_now(),
+            }
+        )
 
-        payload = {
-            "investigation_id": investigation_id,
-            "source_type": source_type,
-            "title": source.title or source_type.title(),
-            "content": source.content or "",
-            "language": source.language or "en",
-            "updated_at": utc_now(),
-        }
+    if not payload:
+        return {"investigation_id": investigation_id, "sources": [], "saved_count": 0}
 
-        try:
-            existing = (
-                supabase.table("investigation_sources")
-                .select("id")
-                .eq("investigation_id", investigation_id)
-                .eq("source_type", source_type)
-                .limit(1)
-                .execute()
+    try:
+        result = (
+            supabase.table("investigation_sources")
+            .upsert(
+                payload,
+                on_conflict="investigation_id,source_type",
             )
-
-            if existing.data:
-                result = (
-                    supabase.table("investigation_sources")
-                    .update(payload)
-                    .eq("id", existing.data[0]["id"])
-                    .execute()
-                )
-            else:
-                payload["created_at"] = utc_now()
-                result = (
-                    supabase.table("investigation_sources")
-                    .insert(payload)
-                    .execute()
-                )
-
-            if result.data:
-                saved.append(result.data[0])
-
-        except Exception as exc:
-            print(f"Source persistence failed for {source_type}: {exc}")
-            raise HTTPException(
-                status_code=500,
-                detail=f"Unable to save {source_type} source: {exc}",
-            )
+            .execute()
+        )
+    except Exception as exc:
+        print(f"Source bulk persistence failed: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Unable to save investigation sources: {exc}",
+        )
 
     return {
         "investigation_id": investigation_id,
-        "sources": saved,
-        "saved_count": len(saved),
+        "sources": result.data or [],
+        "saved_count": len(result.data or []),
     }
 
 
@@ -1684,11 +1835,9 @@ def normalize_source_payload(raw_sources: Any) -> List[SourceInput]:
         if not isinstance(raw, dict):
             continue
 
-        source_type = str(
-            raw.get("source_type")
-            or raw.get("type")
-            or ""
-        ).strip().upper()
+        source_type = (
+            str(raw.get("source_type") or raw.get("type") or "").strip().upper()
+        )
 
         content = raw.get("content")
         if content is None:
@@ -1735,6 +1884,7 @@ def analyze_sources(
     authorization: Optional[str] = Header(None),
 ):
     user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
 
     sources = normalize_source_payload(body.get("sources"))
 
@@ -1787,7 +1937,8 @@ def analyze_sources(
             # Reject exact matches and names containing an extracted location
             # or organization phrase, e.g. "Noida Sector 18".
             if any(
-                entity and (key == entity or re.search(rf"\b{re.escape(entity)}\b", key))
+                entity
+                and (key == entity or re.search(rf"\b{re.escape(entity)}\b", key))
                 for entity in (gpe_values | org_values)
             ):
                 continue
@@ -1972,7 +2123,8 @@ def investigation_analysis(
     investigation_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
 
     persons = (
         supabase.table("persons")
@@ -2015,12 +2167,9 @@ def investigation_analysis(
                 "source": r["person_a_id"],
                 "target": r["person_b_id"],
                 "relationship_type": (
-                    r.get("relationship_type")
-                    or "Evidence-linked Association"
+                    r.get("relationship_type") or "Evidence-linked Association"
                 ),
-                "relationship_description": r.get(
-                    "relationship_description"
-                ),
+                "relationship_description": r.get("relationship_description"),
                 "confidence": r.get("model_confidence"),
                 "reason": r.get("reason"),
                 "score_basis": r.get("score_basis") or [],
@@ -2055,10 +2204,32 @@ def investigation_analysis(
     latest = latest_runs.data[0] if latest_runs.data else None
     saved_summary = latest.get("summary", {}) if latest else {}
 
+    # Return the investigator's saved raw source records together with the
+    # persisted graph/analysis. This makes a reopened investigation fully
+    # restorable for its owner after logout/login, without relying on any
+    # browser-local state. Ownership was already verified above.
+    saved_sources_result = (
+        supabase.table("investigation_sources")
+        .select(
+            "id, investigation_id, source_type, title, content, language, created_at, updated_at"
+        )
+        .eq("investigation_id", investigation_id)
+        .order("source_type")
+        .execute()
+    )
+    saved_sources = [
+        {
+            **row,
+            "content": "" if row.get("content") is None else str(row.get("content")),
+        }
+        for row in (saved_sources_result.data or [])
+    ]
+
     return {
         "investigation_id": investigation_id,
         "analysis_mode": "persisted_current_investigation",
         "graph": graph_data,
+        "sources": saved_sources,
         **analytics,
         "analysis_run": latest,
         "entity_counts": saved_summary.get("entity_counts", {}),
@@ -2079,9 +2250,7 @@ def investigation_analysis(
             analytics.get("community_count", 0),
         ),
         "summary_text": saved_summary.get("summary_text", ""),
-        "source_snapshot_hash": saved_summary.get(
-            "source_snapshot_hash"
-        ),
+        "source_snapshot_hash": saved_summary.get("source_snapshot_hash"),
     }
 
 
@@ -2095,7 +2264,8 @@ def nlp_extract(
     body: DocumentIn,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(body.investigation_id, user_id)
     entities = extract_entities(body.content)
     content_hash = sha256_json(
         {"content": body.content, "source_type": body.source_type}
@@ -2129,7 +2299,8 @@ def create_link(
     body: LinkIn,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(body.investigation_id, user_id)
     last = (
         supabase.table("network_links")
         .select("link_hash")
@@ -2156,7 +2327,8 @@ def get_persons(
     investigation_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
     result = (
         supabase.table("persons")
         .select("*")
@@ -2172,7 +2344,8 @@ def get_relationships(
     investigation_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
     result = (
         supabase.table("person_relationships")
         .select("*")
@@ -2187,7 +2360,8 @@ def graph(
     investigation_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
     analysis = investigation_analysis(investigation_id, authorization)
     return analysis["graph"]
 
@@ -2198,7 +2372,8 @@ def search_persons(
     q: str = "",
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
     value = q.strip()
     if not value:
         return []
@@ -2227,7 +2402,8 @@ def get_person_network(
     person_id: str,
     authorization: Optional[str] = Header(None),
 ):
-    require_user(authorization)
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
     data = graph(investigation_id, authorization)
     ids = {person_id}
     for link in data["links"]:
