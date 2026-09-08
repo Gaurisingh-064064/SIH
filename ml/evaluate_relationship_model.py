@@ -38,6 +38,114 @@ print("Persons shape      :", persons.shape)
 
 print("\nRelationship columns:")
 print(relationships.columns.tolist())
+# ============================================================
+# DUPLICATE RELATIONSHIP PAIR CHECK
+# ============================================================
+
+print("\n================ DUPLICATE PAIR CHECK ================\n")
+
+# Create a unique ID for every pair.
+# P001-P002 and P002-P001 will be treated as the same pair.
+relationships["pair_id"] = relationships.apply(
+    lambda row: "_".join(
+        sorted([
+            str(row["person_a_id"]),
+            str(row["person_b_id"])
+        ])
+    ),
+    axis=1
+)
+
+total_records = len(relationships)
+
+unique_pairs = relationships["pair_id"].nunique()
+
+duplicate_records = relationships.duplicated(
+    subset=["pair_id"],
+    keep=False
+).sum()
+
+print(f"Total relationship records     : {total_records}")
+print(f"Unique person pairs            : {unique_pairs}")
+print(f"Records involved in duplicates : {duplicate_records}")
+
+
+# Show duplicate examples
+duplicates = relationships[
+    relationships.duplicated(
+        subset=["pair_id"],
+        keep=False
+    )
+].sort_values("pair_id")
+
+
+if len(duplicates) > 0:
+
+    print("\nDuplicate pair examples:\n")
+
+    print(
+        duplicates[
+            [
+                "person_a_id",
+                "person_a_name",
+                "person_b_id",
+                "person_b_name",
+                "relationship_label",
+                "pair_id"
+            ]
+        ].head(20)
+    )
+
+else:
+
+    print("\nNo duplicate relationship pairs found.")
+
+
+# ============================================================
+# CONFLICTING LABEL CHECK
+# ============================================================
+
+print("\n================ LABEL CONFLICT CHECK ================\n")
+
+pair_label_counts = (
+    relationships.groupby("pair_id")["relationship_label"]
+    .nunique()
+)
+
+conflicting_pairs = pair_label_counts[
+    pair_label_counts > 1
+]
+
+print(f"Pairs with conflicting labels : {len(conflicting_pairs)}")
+
+
+if len(conflicting_pairs) > 0:
+
+    print("\nConflicting pair examples:\n")
+
+    conflict_ids = conflicting_pairs.index[:10]
+
+    print(
+        relationships[
+            relationships["pair_id"].isin(conflict_ids)
+        ][
+            [
+                "person_a_id",
+                "person_a_name",
+                "person_b_id",
+                "person_b_name",
+                "relationship_label",
+                "pair_id"
+            ]
+        ]
+    )
+
+else:
+
+    print("\nNo conflicting labels found.")
+
+
+print("\n=======================================================\n")
 
 
 # ============================================================
@@ -168,11 +276,67 @@ valid = y.notna()
 
 X = X.loc[valid].reset_index(drop=True)
 y = y.loc[valid].astype(int).reset_index(drop=True)
+# ============================================================
+# FEATURE CORRELATION CHECK
+# ============================================================
+
+print("\n================ FEATURE CORRELATION CHECK ================\n")
+
+# Create a temporary dataframe containing features and target
+correlation_df = X.copy()
+
+correlation_df["relationship_label"] = y
+
+# Calculate correlation of every feature with target
+correlations = correlation_df.corr()[
+    "relationship_label"
+].drop(
+    "relationship_label"
+).sort_values(
+    ascending=False
+)
+
+print("Feature correlation with relationship_label:\n")
+
+print(correlations)
+
+print("\nAbsolute correlations (strongest first):\n")
+
+absolute_correlations = correlations.abs().sort_values(
+    ascending=False
+)
+
+print(absolute_correlations)
+
+print("\n============================================================\n")
 
 print("\nFinal rows:", len(X))
+# ============================================================
+# FEATURE DISTRIBUTION BY CLASS
+# ============================================================
+
+print("\n================ FEATURE DISTRIBUTION BY CLASS ================\n")
+
+distribution_df = X.copy()
+
+distribution_df["relationship_label"] = y
+
+
+class_means = distribution_df.groupby(
+    "relationship_label"
+).mean().T
+
+
+print("Average feature values for each class:\n")
+
+print(class_means)
+
+
+print("\n===============================================================\n")
 
 print("\nClass distribution:")
 print(y.value_counts())
+
 
 
 # ============================================================

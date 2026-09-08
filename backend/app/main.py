@@ -3,6 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import math
+import os
 import re
 from collections import Counter
 from pathlib import Path
@@ -36,11 +37,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.on_event("startup")
+def startup_check():
+    print("\n==============================")
+    print("NYAYANET BACKEND STARTING")
+    print("==============================")
+    print("Relationship model path:", RELATIONSHIP_MODEL_PATH)
+    print("Model exists:", RELATIONSHIP_MODEL_PATH.exists())
+    print("==============================\n")
+
+
 ROOT = Path(__file__).resolve().parents[2]
 MODEL_DIR = ROOT / "ml"
+
 RELATIONSHIP_MODEL_PATH = MODEL_DIR / "relationship_model.joblib"
-ANOMALY_MODEL_PATH = MODEL_DIR / "suspicious_pattern_model.joblib"
-FEATURE_META_PATH = MODEL_DIR / "relationship_features.json"
+# ANOMALY_MODEL_PATH = MODEL_DIR / "suspicious_pattern_model.joblib"
+
+# Set DEBUG_RELATIONSHIP_MODEL=true in the environment to print raw feature
+# values / predict_proba output for every relationship scored. Off by
+# default so normal runs don't flood the logs.
+DEBUG_RELATIONSHIP_MODEL = (
+    os.getenv("DEBUG_RELATIONSHIP_MODEL", "false").lower() == "true"
+)
 
 
 def load_model(path: Path):
@@ -53,6 +72,7 @@ def load_model(path: Path):
         import joblib
 
         if not path.exists():
+            print(f"Model file not found: {path}")
             return None
         return joblib.load(path)
     except Exception as exc:
@@ -61,13 +81,33 @@ def load_model(path: Path):
 
 
 RELATIONSHIP_MODEL = None
-ANOMALY_MODEL = None
-FEATURE_META: Dict[str, Any] = {}
-if FEATURE_META_PATH.exists():
+# ANOMALY_MODEL = None
+
+
+def verify_relationship_model() -> bool:
+    """Lazily load the relationship model and log what it expects.
+
+    Does not force eager loading at import time on its own; only runs when
+    called (e.g. from the startup hook below), and any failure is logged
+    rather than raised.
+    """
+    global RELATIONSHIP_MODEL
+
+    if RELATIONSHIP_MODEL is None:
+        RELATIONSHIP_MODEL = load_model(RELATIONSHIP_MODEL_PATH)
+
+    if RELATIONSHIP_MODEL is None:
+        print("WARNING: Relationship model could not be loaded.")
+        return False
+
     try:
-        FEATURE_META = json.loads(FEATURE_META_PATH.read_text(encoding="utf-8"))
-    except Exception:
-        FEATURE_META = {}
+        feature_count = getattr(RELATIONSHIP_MODEL, "n_features_in_", None)
+        print("Relationship model loaded successfully.")
+        print(f"Model expects {feature_count} features.")
+        return True
+    except Exception as exc:
+        print("Model verification failed:", exc)
+        return False
 
 
 # -----------------------------------------------------------------------------
@@ -294,53 +334,79 @@ def source_activity(source_type: str, text: str) -> Dict[str, float]:
 # -----------------------------------------------------------------------------
 
 
+def _safe_float(
+    value: Any,
+    default: float = 0.0
+) -> float:
+
+    try:
+
+        if value is None or value == "":
+            return default
+
+        return float(value)
+
+    except (TypeError, ValueError):
+
+        return default
+
+
 def relationship_features(record: Dict[str, Any]) -> List[float]:
-    calls = float(record.get("phone_call_count") or record.get("calls") or 0)
-    duration = float(
-        record.get("total_call_duration_sec") or record.get("duration") or 0
+    """
+    Create the exact 6 features used by the current
+    Random Forest relationship model.
+    """
+
+    calls = float(
+        record.get("phone_call_count")
+        or record.get("calls")
+        or 0
     )
-    txns = float(record.get("transaction_count") or record.get("transactions") or 0)
-    amount = float(record.get("total_transaction_amount") or record.get("amount") or 0)
-    meetings = float(record.get("meeting_count") or record.get("meetings") or 0)
-    co = float(record.get("co_occurrences") or 0)
-    source_diversity = float(record.get("source_diversity") or 0)
+
+    duration = float(
+        record.get("total_call_duration_sec")
+        or record.get("duration")
+        or 0
+    )
+
+    transactions = float(
+        record.get("transaction_count")
+        or record.get("transactions")
+        or 0
+    )
+
+    amount = float(
+        record.get("total_transaction_amount")
+        or record.get("amount")
+        or 0
+    )
+
+    meetings = float(
+        record.get("meeting_count")
+        or record.get("meetings")
+        or 0
+    )
+
+    source_diversity = float(
+        record.get("source_diversity")
+        or 0
+    )
 
     return [
         math.log1p(calls),
         math.log1p(duration),
-        math.log1p(txns),
+        math.log1p(transactions),
         math.log1p(amount),
         math.log1p(meetings),
-        math.log1p(co),
         source_diversity,
-        float(record.get("shared_phone") or 0),
-        float(record.get("shared_vehicle") or 0),
-        float(record.get("shared_org") or 0),
-        float(record.get("shared_location") or 0),
     ]
 
-
 def predict_relationship(record: Dict[str, Any]) -> float:
-    """
-    Calculate an evidence-grounded potential relationship score.
 
-    The score is NOT a probability of guilt. It measures how strongly the
-    submitted investigation evidence supports a relationship between the two
-    people.
-
-    Components:
-      - 75% explainable live-evidence strength
-      - 25% learned model signal
-
-    The live-evidence component rewards direct person-to-person records,
-    repeated activity, and independent source corroboration. A narrative
-    mention by itself therefore does not become a high-confidence relationship,
-    while multiple calls + transactions + meetings produce a substantially
-    stronger score.
-    """
     global RELATIONSHIP_MODEL
 
     values = relationship_features(record)
+
     model_score = None
 
     if RELATIONSHIP_MODEL is None:
@@ -348,126 +414,266 @@ def predict_relationship(record: Dict[str, Any]) -> float:
 
     if RELATIONSHIP_MODEL is not None:
         try:
-            model_score = float(RELATIONSHIP_MODEL.predict_proba([values])[0][1])
+            feature_names = [
+                "log_calls",
+                "log_call_duration",
+                "log_transactions",
+                "log_transaction_amount",
+                "log_meetings",
+                "source_diversity",
+            ]
+
+            X = pd.DataFrame(
+                [values],
+                columns=feature_names,
+            )
+
+            model_score = float(
+                RELATIONSHIP_MODEL.predict_proba(X)[0][1]
+            )
+
         except Exception as exc:
-            print("Relationship model inference failed:", exc)
+            print(
+                "Relationship model inference failed:",
+                exc,
+            )
+
             model_score = None
 
-    calls = float(record.get("calls") or 0)
-    duration = float(record.get("duration") or 0)
-    txns = float(record.get("transactions") or 0)
-    amount = float(record.get("amount") or 0)
-    meetings = float(record.get("meetings") or 0)
-    diversity = float(record.get("source_diversity") or 0)
-    co = float(record.get("co_occurrences") or 0)
 
-    # ---------------------------------------------------------
-    # Explainable evidence score: 0..100
-    # ---------------------------------------------------------
+    # ==============================================
+    # EXPLAINABLE EVIDENCE SCORE
+    # ==============================================
+
+    calls = float(
+        record.get("phone_call_count")
+        or record.get("calls")
+        or 0
+    )
+
+    duration = float(
+        record.get("total_call_duration_sec")
+        or record.get("duration")
+        or 0
+    )
+
+    transactions = float(
+        record.get("transaction_count")
+        or record.get("transactions")
+        or 0
+    )
+
+    amount = float(
+        record.get("total_transaction_amount")
+        or record.get("amount")
+        or 0
+    )
+
+    meetings = float(
+        record.get("meeting_count")
+        or record.get("meetings")
+        or 0
+    )
+
+    source_diversity = float(
+        record.get("source_diversity")
+        or 0
+    )
+
+    co = float(
+        record.get("co_occurrences")
+        or 0
+    )
+
+
     evidence = 0.0
 
-    # Direct communication evidence.
-    if calls > 0:
-        evidence += 22.0
-        evidence += min(calls, 8.0) * 2.2
 
-        # Longer cumulative communication strengthens the relationship
-        # evidence, but with diminishing returns.
-        evidence += min(duration / 900.0, 4.0) * 1.5
+    # Communication evidence
+    evidence += min(calls / 20.0, 1.0) * 20.0
 
-    # Direct financial person -> person evidence.
-    if txns > 0:
-        evidence += 24.0
-        evidence += min(txns, 5.0) * 2.5
-        evidence += min(amount / 100000.0, 3.0) * 2.0
+    # Duration evidence
+    evidence += min(duration / 5000.0, 1.0) * 12.0
 
-    # Direct meeting / observation evidence.
-    if meetings > 0:
-        evidence += 22.0
-        evidence += min(meetings, 4.0) * 4.0
+    # Financial evidence
+    evidence += min(transactions / 5.0, 1.0) * 18.0
 
-    # Explicit cross-source corroboration.
-    evidence += min(diversity, 4.0) * 5.0
+    # Transaction amount evidence
+    evidence += min(amount / 250000.0, 1.0) * 15.0
 
-    # Explicit person co-occurrence in relationship-bearing records.
+    # Meetings
+    evidence += min(meetings / 4.0, 1.0) * 15.0
+
+    # Multiple source evidence
+    evidence += min(source_diversity / 4.0, 1.0) * 10.0
+
+    # Co-occurrences
     evidence += min(co, 4.0) * 2.5
 
-    # Shared identifiers are supporting evidence, not relationship proof.
+
+    # Shared identifiers
     if record.get("shared_phone"):
         evidence += 8.0
+
     if record.get("shared_vehicle"):
         evidence += 5.0
+
     if record.get("shared_org"):
         evidence += 4.0
+
     if record.get("shared_location"):
         evidence += 4.0
 
-    evidence_score = (
-        max(
-            0.0,
-            min(100.0, evidence),
-        )
-        / 100.0
-    )
 
-    # ---------------------------------------------------------
-    # Combine the learned model with the evidence score.
-    # The model is deliberately secondary because the live investigation
-    # can contain evidence distributions that differ from synthetic training.
-    # ---------------------------------------------------------
+    evidence_score = max(
+        0.0,
+        min(100.0, evidence)
+    ) / 100.0
+
+
+    # ==============================================
+    # FINAL SCORE
+    # ==============================================
+
     if model_score is None:
+
         final_score = evidence_score
+
     else:
-        final_score = 0.75 * evidence_score + 0.25 * model_score
+
+        final_score = (
+            0.75 * evidence_score
+            +
+            0.25 * model_score
+        )
+
 
     return float(
         max(
             0.0,
-            min(1.0, final_score),
+            min(1.0, final_score)
         )
     )
 
 
-def anomaly_result(record: Dict[str, Any]) -> Dict[str, Any]:
-    global ANOMALY_MODEL
-    values = relationship_features(record)
-    anomaly_score = None
-    is_anomaly = False
+def get_risk_level(confidence: float) -> str:
+    """
+    Bucket a 0..1 relationship confidence score into an investigator-facing
+    risk tier, using the SIH-recommended cutoffs:
 
-    if ANOMALY_MODEL is None:
-        ANOMALY_MODEL = load_model(ANOMALY_MODEL_PATH)
-    if ANOMALY_MODEL is not None:
-        try:
-            decision = float(ANOMALY_MODEL.decision_function([values])[0])
-            prediction = int(ANOMALY_MODEL.predict([values])[0])
-            anomaly_score = -decision
-            is_anomaly = prediction == -1
-        except Exception as exc:
-            print("Anomaly model inference failed:", exc)
+        0.00 - 0.34  -> LOW
+        0.35 - 0.54  -> MEDIUM
+        0.55 - 0.74  -> SUSPICIOUS
+        0.75 - 1.00  -> HIGH
+
+    `confidence` is expected on the 0..1 scale that predict_relationship()
+    already returns (not 0..100).
+    """
+    value = float(confidence or 0.0)
+
+    if value >= 0.75:
+        return "HIGH"
+    elif value >= 0.55:
+        return "SUSPICIOUS"
+    elif value >= 0.35:
+        return "MEDIUM"
+
+    return "LOW"
+
+
+def anomaly_result(
+    record: Dict[str, Any]
+) -> Dict[str, Any]:
 
     reasons: List[str] = []
-    if float(record.get("calls") or 0) >= 8:
-        reasons.append("High communication frequency")
-    if float(record.get("transactions") or 0) >= 3:
-        reasons.append("Repeated financial activity")
-    if float(record.get("amount") or 0) >= 100000:
-        reasons.append("High aggregate transaction value")
-    if float(record.get("meetings") or 0) >= 2:
-        reasons.append("Repeated meetings")
-    if float(record.get("source_diversity") or 0) >= 3:
-        reasons.append("Evidence spans multiple intelligence sources")
+
+
+    calls = float(
+        record.get("phone_call_count")
+        or record.get("calls")
+        or 0
+    )
+
+    transactions = float(
+        record.get("transaction_count")
+        or record.get("transactions")
+        or 0
+    )
+
+    amount = float(
+        record.get("total_transaction_amount")
+        or record.get("amount")
+        or 0
+    )
+
+    meetings = float(
+        record.get("meeting_count")
+        or record.get("meetings")
+        or 0
+    )
+
+    source_diversity = float(
+        record.get("source_diversity")
+        or 0
+    )
+
+
+    if calls >= 8:
+        reasons.append(
+            "High communication frequency"
+        )
+
+
+    if transactions >= 3:
+        reasons.append(
+            "Repeated financial activity"
+        )
+
+
+    if amount >= 100000:
+        reasons.append(
+            "High aggregate transaction value"
+        )
+
+
+    if meetings >= 2:
+        reasons.append(
+            "Repeated meetings"
+        )
+
+
+    if source_diversity >= 3:
+        reasons.append(
+            "Evidence spans multiple intelligence sources"
+        )
+
+
     if any(
         record.get(key)
-        for key in ["shared_phone", "shared_vehicle", "shared_org", "shared_location"]
+        for key in [
+            "shared_phone",
+            "shared_vehicle",
+            "shared_org",
+            "shared_location",
+        ]
     ):
-        reasons.append("Shared identifying or contextual attribute")
+        reasons.append(
+            "Shared identifying or contextual attribute"
+        )
+
 
     return {
-        "is_anomaly": bool(is_anomaly or len(reasons) >= 3),
-        "anomaly_score": anomaly_score,
-        "reasons": reasons,
-    }
 
+        "is_anomaly": len(reasons) >= 2,
+
+        "anomaly_score": min(
+            len(reasons) / 5.0,
+            1.0,
+        ),
+
+        "reasons": reasons,
+
+    }
 
 def relationship_reason(record: Dict[str, Any]) -> str:
     reasons: List[str] = []
@@ -1002,51 +1208,86 @@ def build_live_candidates(
         # ----------------------------------------------------------
         # CDR: ONLY explicit caller -> receiver phone pair.
         # ----------------------------------------------------------
+        # ----------------------------------------------------------
+        # CDR: Parse explicit caller -> receiver phone pairs.
+        # Supports multiple common input formats.
+        # ----------------------------------------------------------
         elif source_type == "CDR":
+
             people_by_phone = {
                 clean_phone(profile.get("phone_num")): key
                 for key, profile in person_profiles.items()
                 if profile.get("phone_num")
             }
 
+            print("\n========== CDR PARSER DEBUG ==========")
+            print("Known phones:", people_by_phone)
+            print("CDR Content:")
+            print(content)
+            print("======================================\n")
+
+            # Split using Record, Call, Entry, or Transaction-style blocks.
             blocks = [
                 item.strip()
                 for item in re.split(
-                    r"(?=Record\s+\d+)",
+                    r"(?=(?:Record|Call|Entry)\s*\d+)",
                     content,
                     flags=re.I,
                 )
                 if item.strip()
             ]
 
+            # If no numbered blocks were found, treat every non-empty line
+            # as a possible CDR record.
+            if len(blocks) <= 1:
+                blocks = [
+                    line.strip()
+                    for line in content.splitlines()
+                    if line.strip()
+                ]
+
             for block in blocks:
-                caller_match = re.search(
-                    r"Caller\s*:\s*((?:\+91[- ]?)?[6-9]\d{9})",
+
+                print("\n----- CDR BLOCK -----")
+                print(block)
+
+                # Extract all Indian phone numbers from the block.
+                phone_matches = re.findall(
+                    r"(?:\+91[-\s]?)?[6-9]\d{9}",
                     block,
-                    flags=re.I,
-                )
-                receiver_match = re.search(
-                    r"Receiver\s*:\s*((?:\+91[- ]?)?[6-9]\d{9})",
-                    block,
-                    flags=re.I,
                 )
 
-                if not caller_match or not receiver_match:
+                if len(phone_matches) < 2:
                     continue
 
-                caller = clean_phone(caller_match.group(1))
-                receiver = clean_phone(receiver_match.group(1))
+                caller = clean_phone(phone_matches[0])
+                receiver = clean_phone(phone_matches[1])
 
                 a_key = people_by_phone.get(caller)
                 b_key = people_by_phone.get(receiver)
 
+                print("Caller phone  :", caller)
+                print("Receiver phone:", receiver)
+                print("Person A      :", a_key)
+                print("Person B      :", b_key)
+
+                # Both phone numbers must belong to known investigation persons.
                 if not a_key or not b_key or a_key == b_key:
+                    print("Skipping unknown phone pair.")
                     continue
 
+                # Try multiple duration formats.
                 duration_match = re.search(
-                    r"Duration\s*:\s*(\d+)",
+                    r"(?:Duration|Call Duration|Duration Sec|Seconds?)"
+                    r"\s*[:=-]?\s*(\d+)",
                     block,
                     flags=re.I,
+                )
+
+                duration = (
+                    int(duration_match.group(1))
+                    if duration_match
+                    else 0
                 )
 
                 add_pair(
@@ -1054,60 +1295,112 @@ def build_live_candidates(
                     b_key,
                     "CDR",
                     calls=1,
-                    duration=(int(duration_match.group(1)) if duration_match else 0),
+                    duration=duration,
                 )
+
+                print("CDR relationship added successfully.")
 
         # ----------------------------------------------------------
         # Financial: ONLY explicit From Person -> To Person.
         # ----------------------------------------------------------
+        # ----------------------------------------------------------
+        # FINANCIAL: Parse explicit sender -> receiver transactions.
+        # Supports multiple common input formats.
+        # ----------------------------------------------------------
         elif source_type == "FINANCIAL":
+
+            print("\n========== FINANCIAL PARSER DEBUG ==========")
+            print("Financial Content:")
+            print(content)
+            print("============================================\n")
+
+            # Split numbered transactions
             transactions = [
                 item.strip()
                 for item in re.split(
-                    r"(?=Transaction\s+\d+)",
+                    r"(?=(?:Transaction|Txn|Record)\s*\d+)",
                     content,
                     flags=re.I,
                 )
                 if item.strip()
             ]
 
+            # If no numbered blocks exist, try paragraphs
+            if len(transactions) <= 1:
+                transactions = [
+                    item.strip()
+                    for item in re.split(r"\n\s*\n", content)
+                    if item.strip()
+                ]
+
             for chunk in transactions:
+
+                print("\n----- FINANCIAL BLOCK -----")
+                print(chunk)
+
+                # Sender
                 from_match = re.search(
-                    r"From Person\s*:\s*([^\n]+)",
+                    r"(?:From Person|From|Sender|Payer)\s*:\s*([^\n]+)",
                     chunk,
                     flags=re.I,
                 )
+
+                # Receiver
                 to_match = re.search(
-                    r"To Person\s*:\s*([^\n]+)",
+                    r"(?:To Person|To|Receiver|Recipient|Payee)\s*:\s*([^\n]+)",
                     chunk,
                     flags=re.I,
                 )
+
+                # Amount
                 amount_match = re.search(
-                    r"Amount\s*:\s*(?:INR|Rs\.?|₹)?\s*([0-9,]+(?:\.\d+)?)",
+                    r"(?:Amount|Value|Transaction Amount)"
+                    r"\s*:\s*(?:INR|Rs\.?|₹)?\s*"
+                    r"([0-9,]+(?:\.\d+)?)",
                     chunk,
                     flags=re.I,
                 )
 
                 if not from_match or not to_match:
+                    print("Skipping: sender or receiver not found.")
                     continue
 
+                # Normalize names
                 a_key = normalize_text(from_match.group(1))
                 b_key = normalize_text(to_match.group(1))
 
-                if a_key not in person_profiles or b_key not in person_profiles:
+                print("From:", a_key)
+                print("To  :", b_key)
+
+                if a_key not in person_profiles:
+                    print(f"Unknown sender: {a_key}")
                     continue
+
+                if b_key not in person_profiles:
+                    print(f"Unknown receiver: {b_key}")
+                    continue
+
+                if a_key == b_key:
+                    print("Skipping same person transaction.")
+                    continue
+
+                amount = (
+                    float(amount_match.group(1).replace(",", ""))
+                    if amount_match
+                    else 0.0
+                )
+
+                print("Amount:", amount)
 
                 add_pair(
                     a_key,
                     b_key,
                     "FINANCIAL",
                     transactions=1,
-                    amount=(
-                        float(amount_match.group(1).replace(",", ""))
-                        if amount_match
-                        else 0.0
-                    ),
+                    amount=amount,
                 )
+
+                print("Financial relationship added successfully.")
 
     results: List[Dict[str, Any]] = []
 
@@ -1120,6 +1413,7 @@ def build_live_candidates(
         record["meetings"] = record["meeting_count"]
 
         record["model_confidence"] = predict_relationship(record)
+        record["risk_level"] = get_risk_level(record["model_confidence"])
 
         # Human-readable score basis for the investigator.
         score_factors = []
@@ -1264,6 +1558,8 @@ def build_live_graph(
                     "investigation."
                 ),
                 "confidence": float(record.get("model_confidence") or 0.0),
+                "risk_level": record.get("risk_level")
+                or get_risk_level(record.get("model_confidence")),
                 "reason": record["reason"],
                 "score_basis": record.get("score_basis", []),
                 "calls": record["phone_call_count"],
@@ -1540,7 +1836,7 @@ def health():
         "status": "ok",
         "supabase_configured": supabase is not None,
         "relationship_model_loaded": RELATIONSHIP_MODEL is not None,
-        "anomaly_model_loaded": ANOMALY_MODEL is not None,
+        #"anomaly_model_loaded": ANOMALY_MODEL is not None,
         "model_loading": "lazy_on_first_analysis",
         "analysis_mode": "live-submitted-evidence",
     }
@@ -1680,12 +1976,8 @@ def get_investigation_workspace(
                 or "Evidence-linked Association",
                 "relationship_description": r.get("relationship_description"),
                 "confidence": r.get("model_confidence"),
-                "reason": r.get("reason"),
-                "score_basis": r.get("score_basis") or [],
-                "calls": r.get("phone_call_count", 0),
-                "transactions": r.get("transaction_count", 0),
-                "meetings": r.get("meeting_count", 0),
-                "total_transaction_amount": r.get("total_transaction_amount", 0),
+                "risk_level": r.get("risk_level")
+                or get_risk_level(r.get("model_confidence")),
                 "suspicious": r.get("suspicious", False),
                 "anomaly_score": r.get("anomaly_score"),
             }
@@ -1999,6 +2291,7 @@ def analyze_sources(
             "person_a_id": c["person_a_key"],
             "person_b_id": c["person_b_key"],
             "confidence": c["model_confidence"],
+            "risk_level": c["risk_level"],
             "reasons": c["suspicious_reasons"],
             "anomaly_score": c["anomaly_score"],
         }
@@ -2011,6 +2304,7 @@ def analyze_sources(
             "person_a_id": c["person_a_key"],
             "person_b_id": c["person_b_key"],
             "confidence": c["model_confidence"],
+            "risk_level": c["risk_level"],
             "reason": c["reason"],
             "relationship_type": c["relationship_type"],
             "source_diversity": c["source_diversity"],
@@ -2171,6 +2465,8 @@ def investigation_analysis(
                 ),
                 "relationship_description": r.get("relationship_description"),
                 "confidence": r.get("model_confidence"),
+                "risk_level": r.get("risk_level")
+                or get_risk_level(r.get("model_confidence")),
                 "reason": r.get("reason"),
                 "score_basis": r.get("score_basis") or [],
                 "calls": r.get("phone_call_count", 0),
