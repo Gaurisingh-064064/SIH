@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./lib/supabase";
 import ForceGraph2D from "react-force-graph-2d";
+import { getDocument, GlobalWorkerOptions } from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+
+GlobalWorkerOptions.workerSrc = pdfWorker;
 
 const API = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
@@ -115,6 +119,41 @@ async function apiFetch(path, options = {}, session, retryOn401 = true) {
   return data;
 }
 
+
+async function extractPdfText(file) {
+  if (!file) return "";
+
+  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf")) {
+    throw new Error("Please select a valid PDF file.");
+  }
+
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const pdf = await getDocument({ data: bytes }).promise;
+  const pages = [];
+
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    const pageText = content.items
+      .map((item) => ("str" in item ? item.str : ""))
+      .join(" ")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (pageText) pages.push(pageText);
+  }
+
+  const extracted = pages.join("\n\n").trim();
+
+  if (!extracted) {
+    throw new Error(
+      "No readable text was found in this PDF. If it is a scanned PDF, OCR support is required."
+    );
+  }
+
+  return extracted;
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -137,6 +176,7 @@ export default function App() {
   const [newDescription, setNewDescription] = useState("");
   const [newSources, setNewSources] = useState({ ...EMPTY_SOURCE });
   const [newFirLanguage, setNewFirLanguage] = useState("en");
+  const [newUploadedFiles, setNewUploadedFiles] = useState({});
   const [creating, setCreating] = useState(false);
 
   const [sourceDrafts, setSourceDrafts] = useState({ ...EMPTY_SOURCE });
@@ -144,6 +184,8 @@ export default function App() {
   const [analysisLoading, setAnalysisLoading] = useState(false);
   const [analysis, setAnalysis] = useState(null);
   const [sourceSaveStatus, setSourceSaveStatus] = useState("Saved");
+  const [uploadedFiles, setUploadedFiles] = useState({});
+  const [pdfUploading, setPdfUploading] = useState({});
   const sourceHydratedRef = useRef(false);
   const hydratedCaseRef = useRef(null);
 
@@ -353,6 +395,7 @@ export default function App() {
     setAnalysisGraph({ nodes: [], links: [] });
     setGraph({ nodes: [], links: [] });
     setSourceDrafts({ ...EMPTY_SOURCE });
+    setUploadedFiles({});
   }
 
   async function createInvestigation(event) {
@@ -388,6 +431,7 @@ export default function App() {
       setNewTitle("");
       setNewDescription("");
       setNewSources({ ...EMPTY_SOURCE });
+      setNewUploadedFiles({});
       resetCaseState();
 
       const sources = filledSources.map((source) => ({
@@ -414,6 +458,70 @@ export default function App() {
       setError(err.message || "Unable to start investigation.");
     } finally {
       setCreating(false);
+    }
+  }
+
+
+  async function handleExistingSourcePdfUpload(sourceKey, file) {
+    if (!file) return;
+
+    setError("");
+    setPdfUploading((prev) => ({ ...prev, [sourceKey]: true }));
+
+    try {
+      const extractedText = await extractPdfText(file);
+
+      sourceDraftsRef.current = {
+        ...sourceDraftsRef.current,
+        [sourceKey]: extractedText,
+      };
+
+      setSourceDrafts((prev) => ({
+        ...prev,
+        [sourceKey]: extractedText,
+      }));
+
+      setUploadedFiles((prev) => ({
+        ...prev,
+        [sourceKey]: file.name,
+      }));
+
+      setEditingSources((prev) => ({
+        ...prev,
+        [sourceKey]: true,
+      }));
+
+      setAnalysisStale(true);
+      setSourceSaveStatus("PDF text extracted — save or run analysis");
+    } catch (err) {
+      setError(err.message || "Unable to extract text from the PDF.");
+    } finally {
+      setPdfUploading((prev) => ({ ...prev, [sourceKey]: false }));
+    }
+  }
+
+  async function handleNewSourcePdfUpload(sourceKey, file) {
+    if (!file) return;
+
+    setError("");
+    setPdfUploading((prev) => ({ ...prev, [`new_${sourceKey}`]: true }));
+
+    try {
+      const extractedText = await extractPdfText(file);
+
+      setNewSources((prev) => ({
+        ...prev,
+        [sourceKey]: extractedText,
+      }));
+
+      setNewUploadedFiles((prev) => ({
+        ...prev,
+        [sourceKey]: file.name,
+      }));
+    } catch (err) {
+      setError(err.message || "Unable to extract text from the PDF.");
+    } finally {
+      setPdfUploading((prev) => ({ ...prev, [`new_${sourceKey}`]: false }));
     }
   }
 
@@ -836,6 +944,154 @@ export default function App() {
     ? Object.values(analysis.entity_counts || {}).reduce((sum, value) => sum + Number(value || 0), 0)
     : 0;
 
+
+  // Investigator Assistance: derive visual and analytical insights from the
+  // same evidence-backed analysis already returned by the backend.
+  const investigatorInsights = useMemo(() => {
+    const relationships = Array.isArray(analysis?.candidate_relationships)
+      ? analysis.candidate_relationships
+      : [];
+    const influential = Array.isArray(analysis?.influential_persons)
+      ? analysis.influential_persons
+      : [];
+    const suspicious = Array.isArray(analysis?.suspicious_patterns)
+      ? analysis.suspicious_patterns
+      : [];
+
+    const personName = (value) => String(value || "Unknown").trim();
+    const getA = (item) => personName(item.person_a_name || item.person_a_id || item.person_a_key);
+    const getB = (item) => personName(item.person_b_name || item.person_b_id || item.person_b_key);
+    const confidence = (item) => Number(item.model_confidence ?? item.confidence ?? 0);
+
+    // Highlight ALL relationships tied at the highest DISPLAYED percentage.
+    // The UI shows rounded whole percentages (for example 76.6% and 76.9%
+    // can both display as 77%), so comparison must use the same rounded value
+    // instead of the hidden raw floating-point confidence.
+    const confidencePercent = (item) => Math.round(confidence(item) * 100);
+
+    const strongestScore = relationships.length
+      ? Math.max(...relationships.map((item) => confidencePercent(item)))
+      : null;
+
+    const strongestRelationships = strongestScore == null
+      ? []
+      : relationships.filter(
+          (item) => confidencePercent(item) === strongestScore
+        );
+
+    // Kept for existing summary/recommendation UI compatibility.
+    const strongestRelationship = strongestRelationships[0] || null;
+
+    const activity = {};
+    relationships.forEach((item) => {
+      [getA(item), getB(item)].forEach((name) => {
+        if (!activity[name]) activity[name] = { name, calls: 0, transactions: 0, amount: 0, meetings: 0, links: 0, confidence: 0 };
+        activity[name].calls += Number(item.calls ?? item.phone_call_count ?? 0);
+        activity[name].transactions += Number(item.transactions ?? item.transaction_count ?? 0);
+        activity[name].amount += Number(item.amount ?? item.total_transaction_amount ?? 0);
+        activity[name].meetings += Number(item.meetings ?? item.meeting_count ?? 0);
+        activity[name].links += 1;
+        activity[name].confidence += confidence(item);
+      });
+    });
+
+    const activityPeople = Object.values(activity);
+    const mostFinancial = [...activityPeople].sort((a, b) => b.amount - a.amount)[0] || null;
+    const mostCommunication = [...activityPeople].sort((a, b) => b.calls - a.calls)[0] || null;
+    const highestRisk = [...relationships]
+      .sort((a, b) => {
+        const ar = String(a.risk_level || "").toLowerCase() === "high" ? 3 : String(a.risk_level || "").toLowerCase() === "medium" ? 2 : 1;
+        const br = String(b.risk_level || "").toLowerCase() === "high" ? 3 : String(b.risk_level || "").toLowerCase() === "medium" ? 2 : 1;
+        return br - ar || confidence(b) - confidence(a);
+      })[0] || null;
+
+    const recommendations = [];
+    if (suspicious.length) recommendations.push(`Review ${suspicious.length} suspicious relationship signal(s) and validate them against the underlying evidence.`);
+    if (strongestRelationship) recommendations.push(`Prioritize the link between ${getA(strongestRelationship)} and ${getB(strongestRelationship)} because it has the strongest current evidence score.`);
+    if (mostFinancial && mostFinancial.amount > 0) recommendations.push(`Trace financial activity connected to ${mostFinancial.name}, including linked transactions and counterparties.`);
+    if (mostCommunication && mostCommunication.calls > 0) recommendations.push(`Review repeated communication involving ${mostCommunication.name} and compare call activity with other source timelines.`);
+    if (!recommendations.length) recommendations.push("Add more structured communication, financial, or surveillance evidence to generate stronger analytical leads.");
+
+    return {
+      influential: influential[0] || null,
+      strongestRelationship,
+      strongestRelationships,
+      strongestScore,
+
+      // Used by the graph to highlight the #1 network-central person.
+      influentialPersonId:
+        influential[0]?.person_id ||
+        influential[0]?.id ||
+        influential[0]?.person_key ||
+        null,
+      influentialPersonName: influential[0]?.name || null,
+
+      highestRisk,
+      mostFinancial,
+      mostCommunication,
+      suspiciousCount: suspicious.length,
+      relationshipCount: relationships.length,
+      recommendations: recommendations.slice(0, 4),
+      relationshipBars: [...relationships].sort((a, b) => confidence(b) - confidence(a)).slice(0, 5),
+      getA,
+      getB,
+      confidence,
+      confidencePercent,
+    };
+  }, [analysis]);
+
+  // Visual prioritization helpers. IDs are preferred because graph labels can
+  // change; names are kept as a fallback for older persisted analyses.
+  const normalizeGraphValue = (value) => String(value || "").trim().toLowerCase();
+
+  const isInfluentialGraphNode = (node) => {
+    const influentialId = normalizeGraphValue(investigatorInsights.influentialPersonId);
+    const influentialName = normalizeGraphValue(investigatorInsights.influentialPersonName);
+    return (
+      (influentialId && normalizeGraphValue(node?.id) === influentialId) ||
+      (influentialName && normalizeGraphValue(node?.name) === influentialName)
+    );
+  };
+
+  const isStrongestGraphLink = (link) => {
+    const strongestRelationships = investigatorInsights.strongestRelationships || [];
+    if (!strongestRelationships.length || !link) return false;
+
+    const source = typeof link.source === "object" ? link.source : { id: link.source };
+    const target = typeof link.target === "object" ? link.target : { id: link.target };
+
+    const linkPair = [
+      normalizeGraphValue(source?.id || source?.name),
+      normalizeGraphValue(target?.id || target?.name),
+    ].sort().join("|");
+
+    const graphNames = [
+      normalizeGraphValue(source?.name || source?.id),
+      normalizeGraphValue(target?.name || target?.id),
+    ].sort().join("|");
+
+    return strongestRelationships.some((strongest) => {
+      const strongestPair = [
+        normalizeGraphValue(
+          strongest.person_a_id || strongest.person_a_key || strongest.person_a_name
+        ),
+        normalizeGraphValue(
+          strongest.person_b_id || strongest.person_b_key || strongest.person_b_name
+        ),
+      ].sort().join("|");
+
+      if (linkPair && strongestPair && linkPair === strongestPair) return true;
+
+      // Fallback for graph links that preserve names rather than person IDs.
+      const strongestNames = [
+        normalizeGraphValue(investigatorInsights.getA(strongest)),
+        normalizeGraphValue(investigatorInsights.getB(strongest)),
+      ].sort().join("|");
+
+      return Boolean(graphNames && strongestNames && graphNames === strongestNames);
+    });
+  };
+
   if (loading) {
     return (
       <div className="app-shell center-screen">
@@ -1064,6 +1320,27 @@ export default function App() {
                       </button>
                     </div>
 
+                    <div className="source-upload-row">
+                      <label className="ghost-button small source-upload-button">
+                        {pdfUploading[source.key] ? "Reading PDF…" : "Upload PDF"}
+                        <input
+                          type="file"
+                          accept=".pdf,application/pdf"
+                          hidden
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            handleExistingSourcePdfUpload(source.key, file);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                      {uploadedFiles[source.key] && (
+                        <small className="uploaded-file-name">
+                          PDF loaded: {uploadedFiles[source.key]}
+                        </small>
+                      )}
+                    </div>
+
                     <textarea
                       rows={5}
                       placeholder={`Paste ${source.label.toLowerCase()} here…`}
@@ -1149,6 +1426,47 @@ export default function App() {
               </div>
             </section>
 
+
+
+            {analysis && (
+              <section className="panel investigator-assistance-panel">
+                <style>{`
+                  .investigator-assistance-panel{margin-top:18px}.assistance-title{margin-bottom:18px}.assistance-title p{margin:6px 0 0;color:#8fa3b8}.assistance-insight-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.assist-card{border:1px solid rgba(91,151,211,.28);border-radius:14px;padding:16px;background:rgba(16,31,48,.55);min-height:118px}.assist-card span{display:block;color:#86a3bd;font-size:11px;letter-spacing:1.2px;margin-bottom:10px}.assist-card strong{font-size:17px;display:block;overflow-wrap:anywhere}.assist-card small{display:block;color:#9eb0c2;margin-top:8px;line-height:1.45}.assistance-lower{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin-top:14px}.assist-subpanel{border:1px solid rgba(91,151,211,.22);border-radius:14px;padding:16px;background:rgba(9,21,34,.42)}.assist-subpanel h3{margin:0 0 14px}.relationship-bar-row{margin-bottom:14px}.relationship-bar-label{display:flex;justify-content:space-between;gap:12px;font-size:13px;margin-bottom:7px}.relationship-bar-track{height:8px;border-radius:999px;background:rgba(116,144,173,.18);overflow:hidden}.relationship-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#39b9c8,#4f8fe8)}.recommendation-row{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid rgba(123,151,180,.14);color:#b9c7d5;line-height:1.45}.recommendation-row:last-child{border-bottom:0}.recommendation-icon{color:#65d6b4;font-weight:700}.assist-empty{color:#8295a9;font-size:13px;padding:8px 0}@media(max-width:1050px){.assistance-insight-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.assistance-lower{grid-template-columns:1fr}}@media(max-width:620px){.assistance-insight-grid{grid-template-columns:1fr}}
+                `}</style>
+                <div className="section-header assistance-title">
+                  <div>
+                    <div className="eyebrow">INVESTIGATOR ASSISTANCE</div>
+                    <h2>Visual & Analytical Insights</h2>
+                    <p>Evidence-backed insights to help investigators prioritize relationships, risks and next actions.</p>
+                  </div>
+                </div>
+
+                <div className="assistance-insight-grid">
+                  <div className="assist-card"><span>MOST INFLUENTIAL PERSON</span><strong>{investigatorInsights.influential?.name || "Not identified"}</strong><small>{investigatorInsights.influential ? `${Math.round(Number(investigatorInsights.influential.influence_score || 0) * 100)} influence score` : "Run analysis with connected entities"}</small></div>
+                  <div className="assist-card"><span>STRONGEST RELATIONSHIP</span><strong>{investigatorInsights.strongestRelationship ? `${investigatorInsights.getA(investigatorInsights.strongestRelationship)} ↔ ${investigatorInsights.getB(investigatorInsights.strongestRelationship)}` : "Not identified"}</strong><small>{investigatorInsights.strongestRelationship ? `${Math.round(investigatorInsights.confidence(investigatorInsights.strongestRelationship) * 100)}% evidence confidence` : "No relationship evidence yet"}</small></div>
+                  <div className="assist-card"><span>HIGHEST RISK LEAD</span><strong>{investigatorInsights.highestRisk ? `${investigatorInsights.getA(investigatorInsights.highestRisk)} ↔ ${investigatorInsights.getB(investigatorInsights.highestRisk)}` : "Not identified"}</strong><small>{investigatorInsights.highestRisk?.risk_level ? `${investigatorInsights.highestRisk.risk_level} risk classification` : "No high-risk relationship surfaced"}</small></div>
+                  <div className="assist-card"><span>SUSPICIOUS SIGNALS</span><strong>{investigatorInsights.suspiciousCount}</strong><small>{investigatorInsights.relationshipCount} evidence-backed relationship(s) analyzed</small></div>
+                </div>
+
+                <div className="assistance-lower">
+                  <div className="assist-subpanel">
+                    <div className="eyebrow">VISUAL PRIORITIZATION</div><h3>Relationship Strength</h3>
+                    {investigatorInsights.relationshipBars.length ? investigatorInsights.relationshipBars.map((item, index) => {
+                      const score = Math.round(investigatorInsights.confidence(item) * 100);
+                      const isStrongest = investigatorInsights.strongestRelationships?.some(
+                        (strongest) => strongest === item
+                      );
+                      return <div className={`relationship-bar-row ${isStrongest ? "strongest-relationship-row" : ""}`} key={`${investigatorInsights.getA(item)}-${investigatorInsights.getB(item)}-${index}`}><div className="relationship-bar-label"><span>{investigatorInsights.getA(item)} ↔ {investigatorInsights.getB(item)} {isStrongest && <b className="strongest-label">STRONGEST</b>}</span><strong style={isStrongest ? { color: "#ff4d4f" } : undefined}>{score}%</strong></div><div className="relationship-bar-track"><div className="relationship-bar-fill" style={{ width: `${Math.max(2, Math.min(score, 100))}%`, background: isStrongest ? "#ff4d4f" : undefined, boxShadow: isStrongest ? "0 0 12px rgba(255,77,79,0.65)" : undefined }} /></div></div>;
+                    }) : <div className="assist-empty">Relationship strength will appear after candidate relationships are generated.</div>}
+                  </div>
+                  <div className="assist-subpanel">
+                    <div className="eyebrow">NEXT ACTIONS</div><h3>Investigator Recommendations</h3>
+                    {investigatorInsights.recommendations.map((recommendation, index) => <div className="recommendation-row" key={index}><span className="recommendation-icon">✓</span><span>{recommendation}</span></div>)}
+                  </div>
+                </div>
+              </section>
+            )}
+
             {analysis && (
               <section className="panel investigation-summary-panel">
                 <div className="section-header">
@@ -1179,7 +1497,7 @@ export default function App() {
                   <h2>Criminal Network Explorer</h2>
                   <p>NyayaNet builds this network automatically from the intelligence submitted to this investigation. Search is used to focus the generated network on a subject.</p>
                 </div>
-                <div className="legend"><span><i className="legend-dot selected" /> Selected Subject</span><span><i className="legend-dot connected" /> Connected Person</span><span>Hover a node for profile details</span></div>
+                <div className="legend"><span><i className="legend-dot selected" /> Selected Subject</span><span><i className="legend-dot connected" /> Connected Person</span><span style={{ color: "#ff4d4f" }}>● Most Influential Person</span><span style={{ color: "#ff4d4f" }}>━ Strongest Relationship</span><span>Hover a node for profile details</span></div>
               </div>
 
               <div className="network-topbar">
@@ -1289,28 +1607,35 @@ export default function App() {
                         nodeCanvasObject={(node, ctx, globalScale) => {
                           const isHovered = hoveredNode === node;
                           const isCenter = Boolean(node.is_center);
-                          const radius = isHovered || isCenter ? 16 : 12;
+                          const isInfluential = isInfluentialGraphNode(node);
+                          const radius = isHovered || isCenter || isInfluential ? 16 : 12;
 
                           ctx.save();
 
-                          if (isHovered || isCenter) {
+                          if (isHovered || isCenter || isInfluential) {
                             ctx.beginPath();
                             ctx.arc(node.x, node.y, radius + 8, 0, Math.PI * 2);
-                            ctx.fillStyle = isCenter
-                              ? "rgba(46, 232, 137, 0.14)"
-                              : "rgba(74, 165, 255, 0.12)";
+                            ctx.fillStyle = isInfluential
+                              ? "rgba(255, 77, 79, 0.20)"
+                              : isCenter
+                                ? "rgba(46, 232, 137, 0.14)"
+                                : "rgba(74, 165, 255, 0.12)";
                             ctx.fill();
                           }
 
                           ctx.beginPath();
                           ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-                          ctx.fillStyle = isCenter ? "#073a2d" : "#102944";
+                          ctx.fillStyle = isInfluential
+                            ? "#4a0d12"
+                            : isCenter ? "#073a2d" : "#102944";
                           ctx.fill();
-                          ctx.strokeStyle = isCenter
-                            ? "#2ee889"
-                            : isHovered
-                              ? "#b9ddff"
-                              : "#4aa5ff";
+                          ctx.strokeStyle = isInfluential
+                            ? "#ff4d4f"
+                            : isCenter
+                              ? "#2ee889"
+                              : isHovered
+                                ? "#b9ddff"
+                                : "#4aa5ff";
                           ctx.lineWidth = isHovered ? 3 : 2;
                           ctx.stroke();
 
@@ -1319,6 +1644,12 @@ export default function App() {
                           ctx.textAlign = "center";
                           ctx.textBaseline = "middle";
                           ctx.fillText(initials(node.name), node.x, node.y);
+
+                          if (isInfluential) {
+                            ctx.font = "700 10px Inter, system-ui, sans-serif";
+                            ctx.fillStyle = "#ff6b6b";
+                            ctx.fillText("★", node.x, node.y - radius - 7);
+                          }
 
                           // Keep names readable but compact. No IDs or entity
                           // metadata are painted onto the graph.
@@ -1362,6 +1693,7 @@ export default function App() {
                           if (!source || !target) return;
                           if (typeof source.x !== "number" || typeof target.x !== "number") return;
 
+                          const isStrongest = isStrongestGraphLink(link);
                           const confidence = link.confidence != null
                             ? `${Math.round(Number(link.confidence) * 100)}%`
                             : "—";
@@ -1376,12 +1708,16 @@ export default function App() {
                           const width = ctx.measureText(label).width + 14;
                           const height = fontSize + 9;
 
-                          ctx.fillStyle = hoveredLink === link
-                            ? "rgba(10, 35, 60, 0.98)"
-                            : "rgba(4, 13, 25, 0.88)";
-                          ctx.strokeStyle = hoveredLink === link
-                            ? "rgba(113, 186, 255, 0.85)"
-                            : "rgba(99, 179, 255, 0.38)";
+                          ctx.fillStyle = isStrongest
+                            ? "rgba(70, 10, 15, 0.98)"
+                            : hoveredLink === link
+                              ? "rgba(10, 35, 60, 0.98)"
+                              : "rgba(4, 13, 25, 0.88)";
+                          ctx.strokeStyle = isStrongest
+                            ? "rgba(255, 77, 79, 0.95)"
+                            : hoveredLink === link
+                              ? "rgba(113, 186, 255, 0.85)"
+                              : "rgba(99, 179, 255, 0.38)";
                           ctx.lineWidth = hoveredLink === link ? 1.5 : 1;
 
                           ctx.beginPath();
@@ -1395,7 +1731,7 @@ export default function App() {
                           ctx.fill();
                           ctx.stroke();
 
-                          ctx.fillStyle = "#dff0ff";
+                          ctx.fillStyle = isStrongest ? "#ffb3b3" : "#dff0ff";
                           ctx.textAlign = "center";
                           ctx.textBaseline = "middle";
                           ctx.fillText(label, x, y);
@@ -1403,10 +1739,14 @@ export default function App() {
                         }}
 
                         linkWidth={(link) =>
-                          hoveredLink === link ? 3.5 : 1.6
+                          isStrongestGraphLink(link)
+                            ? 4.2
+                            : hoveredLink === link ? 3.5 : 1.6
                         }
                         linkColor={(link) =>
-                          hoveredLink === link ? "#71baff" : "rgba(65, 155, 235, 0.52)"
+                          isStrongestGraphLink(link)
+                            ? "#ff4d4f"
+                            : hoveredLink === link ? "#71baff" : "rgba(65, 155, 235, 0.52)"
                         }
                         linkDirectionalArrowLength={7}
                         linkDirectionalArrowRelPos={1}
@@ -1497,7 +1837,50 @@ export default function App() {
             <div className="modal-head"><div><div className="eyebrow">NEW INVESTIGATION</div><h2>Start Investigation Workspace</h2><p>Enter the case details and all available intelligence sources. NyayaNet will process them immediately after the case is created.</p></div><button type="button" onClick={() => !creating && setShowCreateModal(false)}>×</button></div>
             <div className="modal-grid-top"><label>Investigation Title<input value={newTitle} onChange={(e) => setNewTitle(e.target.value)} placeholder="e.g. Network analysis — Sector 18" /></label><label>Case Purpose / Description<textarea rows={3} value={newDescription} onChange={(e) => setNewDescription(e.target.value)} placeholder="Scope, objective, known lead, or case summary…" /></label></div>
             <div className="modal-source-header"><div><span>INTELLIGENCE SOURCES</span><small>Provide the sources available for this case. FIR is not the only accepted input.</small></div><select value={newFirLanguage} onChange={(e) => setNewFirLanguage(e.target.value)}><option value="en">FIR: English</option><option value="hi">FIR: Hindi</option><option value="pa">FIR: Punjabi</option></select></div>
-            <div className="modal-source-grid">{SOURCE_TYPES.map((source) => <div className="modal-source-card" key={source.key}><div><span>{source.icon}</span><strong>{source.label}</strong></div><textarea rows={4} value={newSources[source.key]} onChange={(e) => setNewSources((prev) => ({ ...prev, [source.key]: e.target.value }))} placeholder={`Enter ${source.label.toLowerCase()}…`} /></div>)}</div>
+            <div className="modal-source-grid">
+              {SOURCE_TYPES.map((source) => (
+                <div className="modal-source-card" key={source.key}>
+                  <div>
+                    <span>{source.icon}</span>
+                    <strong>{source.label}</strong>
+                  </div>
+
+                  <div className="source-upload-row">
+                    <label className="ghost-button small source-upload-button">
+                      {pdfUploading[`new_${source.key}`] ? "Reading PDF…" : "Upload PDF"}
+                      <input
+                        type="file"
+                        accept=".pdf,application/pdf"
+                        hidden
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          handleNewSourcePdfUpload(source.key, file);
+                          e.target.value = "";
+                        }}
+                      />
+                    </label>
+
+                    {newUploadedFiles[source.key] && (
+                      <small className="uploaded-file-name">
+                        PDF loaded: {newUploadedFiles[source.key]}
+                      </small>
+                    )}
+                  </div>
+
+                  <textarea
+                    rows={4}
+                    value={newSources[source.key]}
+                    onChange={(e) =>
+                      setNewSources((prev) => ({
+                        ...prev,
+                        [source.key]: e.target.value,
+                      }))
+                    }
+                    placeholder={`Enter or paste ${source.label.toLowerCase()}…`}
+                  />
+                </div>
+              ))}
+            </div>
             <div className="modal-foot"><span>At least one source must be supplied. Original evidence is stored with an integrity hash.</span><div><button type="button" className="ghost-button" onClick={() => setShowCreateModal(false)} disabled={creating}>Cancel</button><button type="submit" className="primary-button" disabled={creating}>{creating ? "Creating & Analyzing…" : "Create & Analyze Investigation"}</button></div></div>
           </form>
         </div>

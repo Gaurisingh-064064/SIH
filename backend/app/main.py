@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import itertools
 import json
 import math
@@ -9,9 +10,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from fastapi import FastAPI, Header, HTTPException
+import pandas as pd
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from pypdf import PdfReader
 
 
 # Keep NLP lazy: importing the NLP module may load spaCy/model data and block startup.
@@ -222,6 +225,59 @@ def normalize_text(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
 
 
+def extract_text_from_pdf(file_obj) -> str:
+    """Extract text content from an uploaded text-based PDF."""
+    try:
+        reader = PdfReader(file_obj)
+        extracted_text: List[str] = []
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                extracted_text.append(page_text.strip())
+
+        text = "\n".join(extracted_text).strip()
+        if not text:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No readable text was found in this PDF. "
+                    "Scanned/image-only PDFs need OCR support."
+                ),
+            )
+        return text
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print("PDF extraction failed:", exc)
+        raise HTTPException(
+            status_code=400,
+            detail="Unable to read text from the PDF file.",
+        )
+
+
+def extract_uploaded_source_text(filename: str, content_type: str, raw: bytes) -> str:
+    """Return extracted text for a supported TXT or PDF upload."""
+    suffix = Path(filename or "").suffix.lower()
+
+    if suffix == ".pdf" or content_type == "application/pdf":
+        return extract_text_from_pdf(io.BytesIO(raw))
+
+    if suffix in {".txt", ".text", ".csv", ".log"} or content_type.startswith("text/"):
+        for encoding in ("utf-8-sig", "utf-8", "utf-16", "latin-1"):
+            try:
+                text = raw.decode(encoding).strip()
+                if text:
+                    return text
+            except UnicodeDecodeError:
+                continue
+        raise HTTPException(400, "Unable to decode the uploaded text file.")
+
+    raise HTTPException(
+        status_code=400,
+        detail="Only TXT and PDF files are supported.",
+    )
+
+
 def get_next_person_id() -> str:
     if supabase is None:
         return "P0001"
@@ -334,10 +390,7 @@ def source_activity(source_type: str, text: str) -> Dict[str, float]:
 # -----------------------------------------------------------------------------
 
 
-def _safe_float(
-    value: Any,
-    default: float = 0.0
-) -> float:
+def _safe_float(value: Any, default: float = 0.0) -> float:
 
     try:
 
@@ -357,40 +410,21 @@ def relationship_features(record: Dict[str, Any]) -> List[float]:
     Random Forest relationship model.
     """
 
-    calls = float(
-        record.get("phone_call_count")
-        or record.get("calls")
-        or 0
-    )
+    calls = float(record.get("phone_call_count") or record.get("calls") or 0)
 
     duration = float(
-        record.get("total_call_duration_sec")
-        or record.get("duration")
-        or 0
+        record.get("total_call_duration_sec") or record.get("duration") or 0
     )
 
     transactions = float(
-        record.get("transaction_count")
-        or record.get("transactions")
-        or 0
+        record.get("transaction_count") or record.get("transactions") or 0
     )
 
-    amount = float(
-        record.get("total_transaction_amount")
-        or record.get("amount")
-        or 0
-    )
+    amount = float(record.get("total_transaction_amount") or record.get("amount") or 0)
 
-    meetings = float(
-        record.get("meeting_count")
-        or record.get("meetings")
-        or 0
-    )
+    meetings = float(record.get("meeting_count") or record.get("meetings") or 0)
 
-    source_diversity = float(
-        record.get("source_diversity")
-        or 0
-    )
+    source_diversity = float(record.get("source_diversity") or 0)
 
     return [
         math.log1p(calls),
@@ -400,6 +434,7 @@ def relationship_features(record: Dict[str, Any]) -> List[float]:
         math.log1p(meetings),
         source_diversity,
     ]
+
 
 def predict_relationship(record: Dict[str, Any]) -> float:
 
@@ -428,9 +463,7 @@ def predict_relationship(record: Dict[str, Any]) -> float:
                 columns=feature_names,
             )
 
-            model_score = float(
-                RELATIONSHIP_MODEL.predict_proba(X)[0][1]
-            )
+            model_score = float(RELATIONSHIP_MODEL.predict_proba(X)[0][1])
 
         except Exception as exc:
             print(
@@ -440,54 +473,29 @@ def predict_relationship(record: Dict[str, Any]) -> float:
 
             model_score = None
 
-
     # ==============================================
     # EXPLAINABLE EVIDENCE SCORE
     # ==============================================
 
-    calls = float(
-        record.get("phone_call_count")
-        or record.get("calls")
-        or 0
-    )
+    calls = float(record.get("phone_call_count") or record.get("calls") or 0)
 
     duration = float(
-        record.get("total_call_duration_sec")
-        or record.get("duration")
-        or 0
+        record.get("total_call_duration_sec") or record.get("duration") or 0
     )
 
     transactions = float(
-        record.get("transaction_count")
-        or record.get("transactions")
-        or 0
+        record.get("transaction_count") or record.get("transactions") or 0
     )
 
-    amount = float(
-        record.get("total_transaction_amount")
-        or record.get("amount")
-        or 0
-    )
+    amount = float(record.get("total_transaction_amount") or record.get("amount") or 0)
 
-    meetings = float(
-        record.get("meeting_count")
-        or record.get("meetings")
-        or 0
-    )
+    meetings = float(record.get("meeting_count") or record.get("meetings") or 0)
 
-    source_diversity = float(
-        record.get("source_diversity")
-        or 0
-    )
+    source_diversity = float(record.get("source_diversity") or 0)
 
-    co = float(
-        record.get("co_occurrences")
-        or 0
-    )
-
+    co = float(record.get("co_occurrences") or 0)
 
     evidence = 0.0
-
 
     # Communication evidence
     evidence += min(calls / 20.0, 1.0) * 20.0
@@ -510,7 +518,6 @@ def predict_relationship(record: Dict[str, Any]) -> float:
     # Co-occurrences
     evidence += min(co, 4.0) * 2.5
 
-
     # Shared identifiers
     if record.get("shared_phone"):
         evidence += 8.0
@@ -524,12 +531,7 @@ def predict_relationship(record: Dict[str, Any]) -> float:
     if record.get("shared_location"):
         evidence += 4.0
 
-
-    evidence_score = max(
-        0.0,
-        min(100.0, evidence)
-    ) / 100.0
-
+    evidence_score = max(0.0, min(100.0, evidence)) / 100.0
 
     # ==============================================
     # FINAL SCORE
@@ -541,19 +543,9 @@ def predict_relationship(record: Dict[str, Any]) -> float:
 
     else:
 
-        final_score = (
-            0.75 * evidence_score
-            +
-            0.25 * model_score
-        )
+        final_score = 0.75 * evidence_score + 0.25 * model_score
 
-
-    return float(
-        max(
-            0.0,
-            min(1.0, final_score)
-        )
-    )
+    return float(max(0.0, min(1.0, final_score)))
 
 
 def get_risk_level(confidence: float) -> str:
@@ -581,72 +573,36 @@ def get_risk_level(confidence: float) -> str:
     return "LOW"
 
 
-def anomaly_result(
-    record: Dict[str, Any]
-) -> Dict[str, Any]:
+def anomaly_result(record: Dict[str, Any]) -> Dict[str, Any]:
 
     reasons: List[str] = []
 
-
-    calls = float(
-        record.get("phone_call_count")
-        or record.get("calls")
-        or 0
-    )
+    calls = float(record.get("phone_call_count") or record.get("calls") or 0)
 
     transactions = float(
-        record.get("transaction_count")
-        or record.get("transactions")
-        or 0
+        record.get("transaction_count") or record.get("transactions") or 0
     )
 
-    amount = float(
-        record.get("total_transaction_amount")
-        or record.get("amount")
-        or 0
-    )
+    amount = float(record.get("total_transaction_amount") or record.get("amount") or 0)
 
-    meetings = float(
-        record.get("meeting_count")
-        or record.get("meetings")
-        or 0
-    )
+    meetings = float(record.get("meeting_count") or record.get("meetings") or 0)
 
-    source_diversity = float(
-        record.get("source_diversity")
-        or 0
-    )
-
+    source_diversity = float(record.get("source_diversity") or 0)
 
     if calls >= 8:
-        reasons.append(
-            "High communication frequency"
-        )
-
+        reasons.append("High communication frequency")
 
     if transactions >= 3:
-        reasons.append(
-            "Repeated financial activity"
-        )
-
+        reasons.append("Repeated financial activity")
 
     if amount >= 100000:
-        reasons.append(
-            "High aggregate transaction value"
-        )
-
+        reasons.append("High aggregate transaction value")
 
     if meetings >= 2:
-        reasons.append(
-            "Repeated meetings"
-        )
-
+        reasons.append("Repeated meetings")
 
     if source_diversity >= 3:
-        reasons.append(
-            "Evidence spans multiple intelligence sources"
-        )
-
+        reasons.append("Evidence spans multiple intelligence sources")
 
     if any(
         record.get(key)
@@ -657,23 +613,17 @@ def anomaly_result(
             "shared_location",
         ]
     ):
-        reasons.append(
-            "Shared identifying or contextual attribute"
-        )
-
+        reasons.append("Shared identifying or contextual attribute")
 
     return {
-
         "is_anomaly": len(reasons) >= 2,
-
         "anomaly_score": min(
             len(reasons) / 5.0,
             1.0,
         ),
-
         "reasons": reasons,
-
     }
+
 
 def relationship_reason(record: Dict[str, Any]) -> str:
     reasons: List[str] = []
@@ -716,6 +666,200 @@ def relationship_reason(record: Dict[str, Any]) -> str:
         + ", ".join(reasons or ["shared investigative context"])
         + "."
     )
+
+
+# -----------------------------------------------------------------------------
+# Investigator assistance insights
+# -----------------------------------------------------------------------------
+
+
+def build_investigator_insights(
+    relationships: List[Dict[str, Any]],
+    influential_persons: List[Dict[str, Any]],
+    suspicious_patterns: List[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Create concise, evidence-based analytical insights for investigators."""
+
+    insights: Dict[str, Any] = {
+        "most_influential_person": None,
+        "strongest_relationship": None,
+        "highest_risk_relationship": None,
+        "suspicious_signals_count": len(suspicious_patterns or []),
+        "top_financial_relationship": None,
+        "top_communication_relationship": None,
+        "recommendations": [],
+    }
+
+    relationships = relationships or []
+    influential_persons = influential_persons or []
+    suspicious_patterns = suspicious_patterns or []
+
+    if influential_persons:
+        insights["most_influential_person"] = max(
+            influential_persons,
+            key=lambda item: float(
+                item.get("influence")
+                or item.get("score")
+                or item.get("centrality")
+                or item.get("connection_count")
+                or 0
+            ),
+        )
+
+    if relationships:
+        insights["strongest_relationship"] = max(
+            relationships,
+            key=lambda item: float(item.get("model_confidence") or 0),
+        )
+
+        risk_order = {
+            "CRITICAL": 4,
+            "HIGH": 3,
+            "MEDIUM": 2,
+            "LOW": 1,
+        }
+
+        insights["highest_risk_relationship"] = max(
+            relationships,
+            key=lambda item: (
+                risk_order.get(str(item.get("risk_level") or "").upper(), 0),
+                float(item.get("model_confidence") or 0),
+                float(item.get("anomaly_score") or 0),
+            ),
+        )
+
+        top_financial = max(
+            relationships,
+            key=lambda item: float(
+                item.get("amount") or item.get("total_transaction_amount") or 0
+            ),
+        )
+        if (
+            float(
+                top_financial.get("amount")
+                or top_financial.get("total_transaction_amount")
+                or 0
+            )
+            > 0
+        ):
+            insights["top_financial_relationship"] = top_financial
+
+        top_communication = max(
+            relationships,
+            key=lambda item: float(
+                item.get("calls") or item.get("phone_call_count") or 0
+            ),
+        )
+        if (
+            float(
+                top_communication.get("calls")
+                or top_communication.get("phone_call_count")
+                or 0
+            )
+            > 0
+        ):
+            insights["top_communication_relationship"] = top_communication
+
+    recommendations: List[Dict[str, Any]] = []
+
+    strongest = insights["strongest_relationship"]
+    if strongest:
+        recommendations.append(
+            {
+                "priority": "HIGH",
+                "type": "RELATIONSHIP",
+                "message": (
+                    "Review the strongest detected relationship between "
+                    f"{strongest.get('person_a_name') or strongest.get('person_a_key') or 'Unknown'} "
+                    "and "
+                    f"{strongest.get('person_b_name') or strongest.get('person_b_key') or 'Unknown'}."
+                ),
+            }
+        )
+
+    financial = insights["top_financial_relationship"]
+    if financial:
+        amount = float(
+            financial.get("amount") or financial.get("total_transaction_amount") or 0
+        )
+        recommendations.append(
+            {
+                "priority": "HIGH" if amount >= 100000 else "MEDIUM",
+                "type": "FINANCIAL",
+                "message": (
+                    "Verify financial activity between "
+                    f"{financial.get('person_a_name') or financial.get('person_a_key') or 'Unknown'} "
+                    "and "
+                    f"{financial.get('person_b_name') or financial.get('person_b_key') or 'Unknown'} "
+                    f"with total value ₹{amount:,.0f}."
+                ),
+            }
+        )
+
+    communication = insights["top_communication_relationship"]
+    if communication:
+        calls = int(
+            communication.get("calls") or communication.get("phone_call_count") or 0
+        )
+        recommendations.append(
+            {
+                "priority": "HIGH" if calls >= 8 else "MEDIUM",
+                "type": "COMMUNICATION",
+                "message": (
+                    "Review communication records between "
+                    f"{communication.get('person_a_name') or communication.get('person_a_key') or 'Unknown'} "
+                    "and "
+                    f"{communication.get('person_b_name') or communication.get('person_b_key') or 'Unknown'} "
+                    f"showing {calls} recorded call(s)."
+                ),
+            }
+        )
+
+    if suspicious_patterns:
+        recommendations.append(
+            {
+                "priority": "HIGH",
+                "type": "SUSPICIOUS_ACTIVITY",
+                "message": (
+                    f"Investigate {len(suspicious_patterns)} detected suspicious "
+                    "activity signal(s) and review their supporting evidence."
+                ),
+            }
+        )
+
+    influential = insights["most_influential_person"]
+    if influential:
+        person_name = (
+            influential.get("name")
+            or influential.get("person_name")
+            or influential.get("person")
+            or "the most connected individual"
+        )
+        recommendations.append(
+            {
+                "priority": "MEDIUM",
+                "type": "NETWORK",
+                "message": (
+                    f"Prioritize network analysis around {person_name} due to "
+                    "their influence within the investigation."
+                ),
+            }
+        )
+
+    if not recommendations:
+        recommendations.append(
+            {
+                "priority": "LOW",
+                "type": "GENERAL",
+                "message": (
+                    "No high-priority analytical lead is currently available. "
+                    "Add more structured source evidence for stronger insights."
+                ),
+            }
+        )
+
+    insights["recommendations"] = recommendations
+    return insights
 
 
 # -----------------------------------------------------------------------------
@@ -1084,19 +1228,22 @@ def build_live_candidates(
                 "shared_vehicle": 0,
                 "shared_org": 0,
                 "shared_location": 0,
+                # NEW: Store the actual evidence behind this relationship
+                "evidence": [],
             },
         )
 
     def add_pair(
-        a_key: str,
-        b_key: str,
-        source_type: str,
-        calls: int = 0,
-        duration: int = 0,
-        transactions: int = 0,
-        amount: float = 0.0,
-        meetings: int = 0,
-    ):
+    a_key: str,
+    b_key: str,
+    source_type: str,
+    calls: int = 0,
+    duration: int = 0,
+    transactions: int = 0,
+    amount: float = 0.0,
+    meetings: int = 0,
+    evidence_text: str = "",
+):
         if not a_key or not b_key or a_key == b_key:
             return
 
@@ -1108,6 +1255,18 @@ def build_live_candidates(
         record["transaction_count"] += transactions
         record["total_transaction_amount"] += amount
         record["meeting_count"] += meetings
+        # Store evidence so investigators can see why this relationship exists
+        record["evidence"].append(
+    {
+        "source_type": source_type,
+        "description": evidence_text or f"Relationship detected from {source_type}",
+        "calls": calls,
+        "duration": duration,
+        "transactions": transactions,
+        "amount": amount,
+        "meetings": meetings,
+    }
+)
 
     # --------------------------------------------------------------
     # Narrative sources: pair names ONLY when they are explicitly
@@ -1240,11 +1399,7 @@ def build_live_candidates(
             # If no numbered blocks were found, treat every non-empty line
             # as a possible CDR record.
             if len(blocks) <= 1:
-                blocks = [
-                    line.strip()
-                    for line in content.splitlines()
-                    if line.strip()
-                ]
+                blocks = [line.strip() for line in content.splitlines() if line.strip()]
 
             for block in blocks:
 
@@ -1284,11 +1439,7 @@ def build_live_candidates(
                     flags=re.I,
                 )
 
-                duration = (
-                    int(duration_match.group(1))
-                    if duration_match
-                    else 0
-                )
+                duration = int(duration_match.group(1)) if duration_match else 0
 
                 add_pair(
                     a_key,
@@ -1836,7 +1987,7 @@ def health():
         "status": "ok",
         "supabase_configured": supabase is not None,
         "relationship_model_loaded": RELATIONSHIP_MODEL is not None,
-        #"anomaly_model_loaded": ANOMALY_MODEL is not None,
+        # "anomaly_model_loaded": ANOMALY_MODEL is not None,
         "model_loading": "lazy_on_first_analysis",
         "analysis_mode": "live-submitted-evidence",
     }
@@ -2013,6 +2164,14 @@ def get_investigation_workspace(
         "influential_persons": saved_summary.get(
             "influential_persons", analytics.get("influential_persons", [])
         ),
+        "investigator_insights": saved_summary.get(
+            "investigator_insights",
+            build_investigator_insights(
+                saved_summary.get("top_relationships", []),
+                analytics.get("influential_persons", []),
+                saved_summary.get("suspicious_patterns", []),
+            ),
+        ),
         "community_count": saved_summary.get(
             "community_count", analytics.get("community_count", 0)
         ),
@@ -2043,6 +2202,94 @@ def get_investigation_sources(
     return {
         "investigation_id": investigation_id,
         "sources": result.data or [],
+    }
+
+
+@app.post("/api/investigations/{investigation_id}/sources/upload")
+async def upload_investigation_source(
+    investigation_id: str,
+    source_type: str = Form(...),
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    language: str = Form("en"),
+    authorization: Optional[str] = Header(None),
+):
+    """Upload a TXT or PDF intelligence source and save extracted text.
+
+    The original file is not required for analysis because NyayaNet stores the
+    extracted text in the same investigation_sources table used by the editor.
+    """
+    user_id = require_user(authorization)
+    require_investigation_owner(investigation_id, user_id)
+
+    normalized_type = source_type.strip().upper()
+    if not normalized_type:
+        raise HTTPException(400, "source_type is required")
+
+    allowed_source_types = {
+        "FIR",
+        "POLICE_REPORT",
+        "CDR",
+        "FINANCIAL",
+        "SURVEILLANCE",
+        "SOCIAL_MEDIA",
+        "CRIMINAL_HISTORY",
+    }
+    if normalized_type not in allowed_source_types:
+        raise HTTPException(400, "Invalid source_type")
+
+    if not file.filename:
+        raise HTTPException(400, "Please select a TXT or PDF file")
+
+    raw = await file.read()
+    max_size = 15 * 1024 * 1024
+    if not raw:
+        raise HTTPException(400, "Uploaded file is empty")
+    if len(raw) > max_size:
+        raise HTTPException(413, "File is too large. Maximum allowed size is 15 MB.")
+
+    extracted_text = extract_uploaded_source_text(
+        file.filename,
+        file.content_type or "",
+        raw,
+    )
+
+    source_title = (
+        title.strip() if title and title.strip() else Path(file.filename).stem
+    )
+    payload = {
+        "investigation_id": investigation_id,
+        "source_type": normalized_type,
+        "title": source_title,
+        "content": extracted_text,
+        "language": language or "en",
+        "created_at": utc_now(),
+        "updated_at": utc_now(),
+    }
+
+    try:
+        result = (
+            supabase.table("investigation_sources")
+            .upsert(
+                payload,
+                on_conflict="investigation_id,source_type",
+            )
+            .execute()
+        )
+    except Exception as exc:
+        print("Source upload persistence failed:", exc)
+        raise HTTPException(500, "Unable to save uploaded source")
+
+    saved = result.data[0] if result.data else payload
+    return {
+        "message": "Source uploaded and text extracted successfully",
+        "investigation_id": investigation_id,
+        "source_type": normalized_type,
+        "title": source_title,
+        "filename": file.filename,
+        "file_type": Path(file.filename).suffix.lower(),
+        "characters_extracted": len(extracted_text),
+        "source": saved,
     }
 
 
@@ -2299,6 +2546,12 @@ def analyze_sources(
         if c["suspicious"]
     ]
 
+    investigator_insights = build_investigator_insights(
+        candidates,
+        analytics.get("influential_persons", []),
+        suspicious_patterns,
+    )
+
     top_relationships = [
         {
             "person_a_id": c["person_a_key"],
@@ -2342,6 +2595,7 @@ def analyze_sources(
                     "top_relationships": top_relationships,
                     "influential_persons": analytics.get("influential_persons", []),
                     "suspicious_patterns": suspicious_patterns[:20],
+                    "investigator_insights": investigator_insights,
                     "community_count": analytics.get("community_count", 0),
                     "graph": graph_data,
                     "summary_text": (
