@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import hashlib
 import io
 import itertools
 import json
@@ -15,6 +15,7 @@ from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pypdf import PdfReader
+from app.blockchain import blockchain
 
 
 # Keep NLP lazy: importing the NLP module may load spaCy/model data and block startup.
@@ -220,6 +221,915 @@ def clean_phone(value: Optional[str]) -> Optional[str]:
         phone = phone[3:]
     return phone
 
+
+def generate_evidence_hash(content: str) -> str:
+    """
+    Generate a SHA-256 hash for evidence/source content.
+
+    The original evidence is NOT stored in the blockchain.
+    Only this cryptographic fingerprint will be recorded.
+    """
+
+    if content is None:
+        content = ""
+
+    normalized_content = str(content).encode("utf-8")
+
+    return hashlib.sha256(normalized_content).hexdigest()
+
+
+def generate_evidence_id(
+    investigation_id: str,
+    source_type: str,
+    content: str,
+) -> str:
+    """
+    Generate a deterministic unique evidence identifier.
+    """
+
+    evidence_input = f"{investigation_id}|" f"{source_type}|" f"{content}"
+
+    evidence_hash = hashlib.sha256(evidence_input.encode("utf-8")).hexdigest()
+
+    return f"EV-{evidence_hash[:12].upper()}"
+
+
+# -----------------------------------------------------------------------------
+# BLOCKCHAIN EVIDENCE LEDGER
+# -----------------------------------------------------------------------------
+
+# Temporary in-memory fallback blockchain storage.
+# Supabase is used when the investigation_blockchain table is available.
+BLOCKCHAIN_EVIDENCE_LEDGER: Dict[str, List[Dict[str, Any]]] = {}
+
+
+def calculate_block_hash(block_data: Dict[str, Any]) -> str:
+    """
+    Generate SHA-256 hash for a blockchain block.
+    """
+
+    encoded_data = json.dumps(
+        block_data,
+        sort_keys=True,
+        default=str,
+    ).encode("utf-8")
+
+    return hashlib.sha256(encoded_data).hexdigest()
+
+
+def get_investigation_chain(
+    investigation_id: str,
+) -> List[Dict[str, Any]]:
+    """
+    Get the blockchain ledger for an investigation.
+
+    First tries Supabase.
+    Falls back to in-memory storage if the database table
+    is unavailable.
+    """
+
+    try:
+        result = (
+            supabase
+            .table("investigation_blockchain")
+            .select("*")
+            .eq(
+                "investigation_id",
+                investigation_id,
+            )
+            .order(
+                "block_index"
+            )
+            .execute()
+        )
+
+        chain = result.data or []
+
+        if chain:
+            return chain
+
+    except Exception as exc:
+        print(
+            "Blockchain database load failed:",
+            exc,
+        )
+
+    # Fallback to memory
+
+    if investigation_id not in BLOCKCHAIN_EVIDENCE_LEDGER:
+        BLOCKCHAIN_EVIDENCE_LEDGER[
+            investigation_id
+        ] = []
+
+    return BLOCKCHAIN_EVIDENCE_LEDGER[
+        investigation_id
+    ]
+
+
+def create_evidence_block(
+    investigation_id: str,
+    source_type: str,
+    title: str,
+    content: str,
+) -> Dict[str, Any]:
+    """
+    Create an immutable blockchain block for evidence.
+
+    Original evidence content is NOT stored
+    in the blockchain.
+
+    Only metadata and SHA-256 fingerprint
+    are stored.
+    """
+
+    # -------------------------------------------------
+    # GENERATE EVIDENCE HASH
+    # -------------------------------------------------
+
+    evidence_hash = generate_evidence_hash(
+        content
+    )
+
+    evidence_id = generate_evidence_id(
+        investigation_id,
+        source_type,
+        content,
+    )
+
+    # -------------------------------------------------
+    # GET EXISTING BLOCKCHAIN
+    # -------------------------------------------------
+
+    chain = get_investigation_chain(
+        investigation_id
+    )
+
+    # -------------------------------------------------
+    # PREVENT DUPLICATE BLOCKS
+    # -------------------------------------------------
+
+    for existing_block in chain:
+
+        if (
+            existing_block.get("evidence_id")
+            == evidence_id
+        ):
+            return existing_block
+
+    # -------------------------------------------------
+    # DETERMINE BLOCK INDEX
+    # -------------------------------------------------
+
+    if len(chain) == 0:
+
+        block_index = 0
+
+        previous_hash = "0" * 64
+
+    else:
+
+        last_block = chain[-1]
+
+        block_index = int(
+            last_block.get(
+                "block_index",
+                last_block.get(
+                    "index",
+                    len(chain) - 1,
+                ),
+            )
+        ) + 1
+
+        previous_hash = (
+            last_block.get("block_hash")
+            or "0" * 64
+        )
+
+    # -------------------------------------------------
+    # CREATE BLOCK DATA
+    # -------------------------------------------------
+
+    timestamp = utc_now()
+
+    block = {
+        "block_index": block_index,
+        "timestamp": timestamp,
+        "investigation_id": investigation_id,
+        "evidence_id": evidence_id,
+        "source_type": (
+            source_type or ""
+        ).upper(),
+        "title": (
+            title or "Evidence"
+        ),
+        "evidence_hash": evidence_hash,
+        "previous_hash": previous_hash,
+    }
+
+    # -------------------------------------------------
+    # GENERATE BLOCK HASH
+    # -------------------------------------------------
+
+    block_hash = calculate_block_hash(
+        block
+    )
+
+    block["block_hash"] = block_hash
+
+    # -------------------------------------------------
+    # SAVE BLOCK TO SUPABASE
+    # -------------------------------------------------
+
+    database_saved = False
+
+    try:
+
+        blockchain_payload = {
+            "investigation_id": investigation_id,
+            "block_index": block_index,
+            "evidence_id": evidence_id,
+            "source_type": (
+                source_type or ""
+            ).upper(),
+            "title": (
+                title or "Evidence"
+            ),
+            "evidence_hash": evidence_hash,
+            "previous_hash": previous_hash,
+            "block_hash": block_hash,
+            "timestamp": timestamp,
+        }
+
+        (
+            supabase
+            .table("investigation_blockchain")
+            .upsert(
+                blockchain_payload,
+                on_conflict=(
+                    "investigation_id,"
+                    "evidence_id"
+                ),
+            )
+            .execute()
+        )
+
+        database_saved = True
+
+        print(
+            "Blockchain block saved to Supabase"
+        )
+
+    except Exception as exc:
+
+        print(
+            "Blockchain persistence failed:",
+            exc,
+        )
+
+    # -------------------------------------------------
+    # FALLBACK MEMORY STORAGE
+    # -------------------------------------------------
+
+    if not database_saved:
+
+        if (
+            investigation_id
+            not in BLOCKCHAIN_EVIDENCE_LEDGER
+        ):
+            BLOCKCHAIN_EVIDENCE_LEDGER[
+                investigation_id
+            ] = []
+
+        memory_chain = (
+            BLOCKCHAIN_EVIDENCE_LEDGER[
+                investigation_id
+            ]
+        )
+
+        duplicate_found = False
+
+        for existing_block in memory_chain:
+
+            if (
+                existing_block.get(
+                    "evidence_id"
+                )
+                == evidence_id
+            ):
+                duplicate_found = True
+                break
+
+        if not duplicate_found:
+
+            memory_chain.append(
+                block
+            )
+
+    # -------------------------------------------------
+    # LOG BLOCK CREATION
+    # -------------------------------------------------
+
+    print(
+        "\n=============================="
+    )
+
+    print(
+        "BLOCKCHAIN EVIDENCE ADDED"
+    )
+
+    print(
+        "=============================="
+    )
+
+    print(
+        "Investigation ID:",
+        investigation_id,
+    )
+
+    print(
+        "Block Index:",
+        block_index,
+    )
+
+    print(
+        "Evidence ID:",
+        evidence_id,
+    )
+
+    print(
+        "Evidence Hash:",
+        evidence_hash,
+    )
+
+    print(
+        "Previous Hash:",
+        previous_hash,
+    )
+
+    print(
+        "Block Hash:",
+        block_hash,
+    )
+
+    print(
+        "Database Saved:",
+        database_saved,
+    )
+
+    print(
+        "==============================\n"
+    )
+
+    # IMPORTANT
+
+    return block
+
+def verify_blockchain_integrity(
+    investigation_id: str,
+) -> Dict[str, Any]:
+    """
+    Verify the complete blockchain evidence chain.
+
+    Checks:
+    1. Previous hash linkage
+    2. Block hash integrity
+    3. Block order
+    """
+
+    try:
+        response = (
+            supabase
+            .table("investigation_blockchain")
+            .select("*")
+            .eq(
+                "investigation_id",
+                investigation_id,
+            )
+            .order(
+                "block_index"
+            )
+            .execute()
+        )
+
+        blocks = response.data or []
+
+    except Exception as exc:
+
+        print(
+            "Blockchain verification database error:",
+            exc,
+        )
+
+        return {
+            "valid": False,
+            "message": "Unable to load blockchain records",
+            "total_blocks": 0,
+            "verified_blocks": 0,
+            "invalid_blocks": [],
+        }
+
+    if not blocks:
+
+        return {
+            "valid": True,
+            "message": "No blockchain evidence records found",
+            "total_blocks": 0,
+            "verified_blocks": 0,
+            "invalid_blocks": [],
+        }
+        # ------------------------------------------
+    # LOAD CURRENT INVESTIGATION SOURCES
+    # ------------------------------------------
+
+    try:
+
+        sources_response = (
+            supabase
+            .table("investigation_sources")
+            .select(
+                "source_type, title, content"
+            )
+            .eq(
+                "investigation_id",
+                investigation_id,
+            )
+            .execute()
+        )
+
+        current_sources = (
+            sources_response.data or []
+        )
+
+    except Exception as exc:
+
+        print(
+            "Evidence source load failed:",
+            exc,
+        )
+
+        current_sources = []
+
+    # ------------------------------------------
+    # CREATE SOURCE LOOKUP
+    # ------------------------------------------
+
+    sources_by_type = {}
+
+    for source in current_sources:
+
+        source_type = (
+            source.get(
+                "source_type",
+                "",
+            )
+            .strip()
+            .upper()
+        )
+
+        if source_type:
+
+            sources_by_type[
+                source_type
+            ] = source
+
+    invalid_blocks = []
+
+    verified_blocks = 0
+
+    expected_previous_hash = "0" * 64
+
+    expected_block_index = 0
+
+    for block in blocks:
+
+        block_index = int(
+            block.get(
+                "block_index",
+                0,
+            )
+        )
+
+        evidence_id = (
+            block.get(
+                "evidence_id",
+                "",
+            )
+        )
+
+        evidence_hash = (
+            block.get(
+                "evidence_hash",
+                "",
+            )
+        )
+
+        previous_hash = (
+            block.get(
+                "previous_hash",
+                "",
+            )
+        )
+
+        stored_block_hash = (
+            block.get(
+                "block_hash",
+                "",
+            )
+        )
+
+        timestamp = (
+            block.get(
+                "timestamp",
+                "",
+            )
+        )
+
+        source_type = (
+            block.get(
+                "source_type",
+                "",
+            )
+        )
+
+        title = (
+            block.get(
+                "title",
+                "Evidence",
+            )
+        )
+
+        errors = []
+                # ------------------------------------------
+        # 3. VERIFY ACTUAL EVIDENCE CONTENT
+        # ------------------------------------------
+
+        normalized_source_type = (
+            source_type
+            .strip()
+            .upper()
+        )
+
+        current_source = sources_by_type.get(
+            normalized_source_type
+        )
+
+        if current_source is None:
+
+            errors.append(
+                "Original evidence source is missing"
+            )
+
+        else:
+
+            current_content = (
+                current_source.get(
+                    "content",
+                    ""
+                )
+            )
+
+            current_evidence_hash = (
+                generate_evidence_hash(
+                    current_content
+                )
+            )
+
+            if current_evidence_hash != evidence_hash:
+
+                errors.append(
+                    "Evidence content has been modified "
+                    "after blockchain registration"
+                )
+
+        # ------------------------------------------
+        # 1. VERIFY BLOCK INDEX
+        # ------------------------------------------
+
+        if block_index != expected_block_index:
+
+            errors.append(
+                "Block index sequence is invalid"
+            )
+
+        # ------------------------------------------
+        # 2. VERIFY PREVIOUS HASH
+        # ------------------------------------------
+
+        if previous_hash != expected_previous_hash:
+
+            errors.append(
+                "Previous hash does not match "
+                "the preceding block"
+            )
+
+        # ------------------------------------------
+        # 3. RECREATE EXACT ORIGINAL BLOCK
+        # ------------------------------------------
+
+        original_block_data = {
+            "block_index": block_index,
+            "timestamp": timestamp,
+            "investigation_id": investigation_id,
+            "evidence_id": evidence_id,
+            "source_type": (
+                source_type or ""
+            ).upper(),
+            "title": (
+                title or "Evidence"
+            ),
+            "evidence_hash": evidence_hash,
+            "previous_hash": previous_hash,
+        }
+
+        # ------------------------------------------
+        # 4. RECALCULATE BLOCK HASH
+        # ------------------------------------------
+
+        recalculated_block_hash = (
+            calculate_block_hash(
+                original_block_data
+            )
+        )
+
+        if (
+            recalculated_block_hash
+            != stored_block_hash
+        ):
+
+            errors.append(
+                "Block hash integrity check failed"
+            )
+
+        # ------------------------------------------
+        # BLOCK RESULT
+        # ------------------------------------------
+
+        if errors:
+
+            invalid_blocks.append(
+                {
+                    "block_index": block_index,
+                    "evidence_id": evidence_id,
+                    "source_type": source_type,
+                    "title": title,
+                    "errors": errors,
+                }
+            )
+
+        else:
+
+            verified_blocks += 1
+
+        # ------------------------------------------
+        # PREPARE NEXT BLOCK CHECK
+        # ------------------------------------------
+
+        expected_previous_hash = (
+            stored_block_hash
+        )
+
+        expected_block_index += 1
+
+    # ------------------------------------------
+    # FINAL RESULT
+    # ------------------------------------------
+
+        tampered_blocks = []
+
+    for block in invalid_blocks:
+
+        tampering_errors = [
+            error
+            for error in block.get(
+                "errors",
+                []
+            )
+            if (
+                "modified" in error.lower()
+                or "missing" in error.lower()
+            )
+        ]
+
+        if tampering_errors:
+
+            tampered_blocks.append(
+                {
+                    "block_index": block.get(
+                        "block_index"
+                    ),
+                    "evidence_id": block.get(
+                        "evidence_id"
+                    ),
+                    "source_type": block.get(
+                        "source_type"
+                    ),
+                    "title": block.get(
+                        "title"
+                    ),
+                    "errors": tampering_errors,
+                }
+            )
+
+    return {
+        "valid": (
+            len(invalid_blocks) == 0
+        ),
+        "message": (
+            "Blockchain and evidence integrity "
+            "verified successfully"
+            if len(invalid_blocks) == 0
+            else "Blockchain or evidence integrity "
+            "violation detected"
+        ),
+        "total_blocks": len(blocks),
+        "verified_blocks": verified_blocks,
+        "invalid_blocks": invalid_blocks,
+        "tampering_detected": (
+            len(tampered_blocks) > 0
+        ),
+        "tampered_blocks": tampered_blocks,
+    }
+
+
+def verify_evidence_integrity(
+    investigation_id: str,
+    evidence_id: str,
+    content: str,
+) -> Dict[str, Any]:
+    """
+    Verify evidence content against the blockchain.
+
+    Also verifies the complete blockchain chain.
+    """
+
+    # -------------------------------------------------
+    # GET BLOCKCHAIN
+    # -------------------------------------------------
+
+    chain = get_investigation_chain(
+        investigation_id
+    )
+
+    evidence_block = None
+
+    # -------------------------------------------------
+    # FIND EVIDENCE BLOCK
+    # -------------------------------------------------
+
+    for block in chain:
+
+        if (
+            block.get("evidence_id")
+            == evidence_id
+        ):
+
+            evidence_block = block
+
+            break
+
+    # -------------------------------------------------
+    # BLOCK NOT FOUND
+    # -------------------------------------------------
+
+    if evidence_block is None:
+
+        return {
+            "found": False,
+            "valid": False,
+            "tampered": None,
+            "chain_valid": False,
+            "message": (
+                "Evidence not found "
+                "in blockchain."
+            ),
+        }
+
+    # -------------------------------------------------
+    # VERIFY EVIDENCE HASH
+    # -------------------------------------------------
+
+    current_hash = generate_evidence_hash(
+        content
+    )
+
+    stored_hash = (
+        evidence_block.get(
+            "evidence_hash"
+        )
+    )
+
+    evidence_valid = (
+        current_hash
+        == stored_hash
+    )
+
+    # -------------------------------------------------
+    # VERIFY COMPLETE BLOCKCHAIN
+    # -------------------------------------------------
+
+    chain_valid = True
+
+    previous_hash = "0" * 64
+
+    for block in chain:
+
+        block_index = block.get(
+            "block_index",
+            block.get("index"),
+        )
+
+        # Recreate EXACT original block data
+        # used while generating the block hash
+
+        block_data = {
+            "block_index": block_index,
+            "timestamp": block.get(
+                "timestamp"
+            ),
+            "investigation_id": block.get(
+                "investigation_id"
+            ),
+            "evidence_id": block.get(
+                "evidence_id"
+            ),
+            "source_type": block.get(
+                "source_type"
+            ),
+            "title": block.get(
+                "title"
+            ),
+            "evidence_hash": block.get(
+                "evidence_hash"
+            ),
+            "previous_hash": block.get(
+                "previous_hash"
+            ),
+        }
+
+        expected_hash = calculate_block_hash(
+            block_data
+        )
+
+        # Verify previous hash connection
+
+        if (
+            block.get("previous_hash")
+            != previous_hash
+        ):
+
+            chain_valid = False
+
+            break
+
+        # Verify block hash
+
+        if (
+            block.get("block_hash")
+            != expected_hash
+        ):
+
+            chain_valid = False
+
+            break
+
+        previous_hash = block.get(
+            "block_hash"
+        )
+
+    # -------------------------------------------------
+    # FINAL RESULT
+    # -------------------------------------------------
+
+    final_valid = (
+        evidence_valid
+        and chain_valid
+    )
+
+    return {
+        "found": True,
+        "valid": final_valid,
+        "tampered": (
+            not evidence_valid
+        ),
+        "chain_valid": chain_valid,
+        "evidence_id": evidence_id,
+        "stored_evidence_hash": stored_hash,
+        "current_evidence_hash": current_hash,
+        "block_hash": evidence_block.get(
+            "block_hash"
+        ),
+        "previous_hash": evidence_block.get(
+            "previous_hash"
+        ),
+        "message": (
+            "Evidence integrity verified successfully."
+            if final_valid
+            else (
+                "Evidence integrity check failed. "
+                "Possible tampering detected."
+            )
+        ),
+    }
 
 def normalize_text(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
@@ -1234,16 +2144,16 @@ def build_live_candidates(
         )
 
     def add_pair(
-    a_key: str,
-    b_key: str,
-    source_type: str,
-    calls: int = 0,
-    duration: int = 0,
-    transactions: int = 0,
-    amount: float = 0.0,
-    meetings: int = 0,
-    evidence_text: str = "",
-):
+        a_key: str,
+        b_key: str,
+        source_type: str,
+        calls: int = 0,
+        duration: int = 0,
+        transactions: int = 0,
+        amount: float = 0.0,
+        meetings: int = 0,
+        evidence_text: str = "",
+    ):
         if not a_key or not b_key or a_key == b_key:
             return
 
@@ -1257,16 +2167,17 @@ def build_live_candidates(
         record["meeting_count"] += meetings
         # Store evidence so investigators can see why this relationship exists
         record["evidence"].append(
-    {
-        "source_type": source_type,
-        "description": evidence_text or f"Relationship detected from {source_type}",
-        "calls": calls,
-        "duration": duration,
-        "transactions": transactions,
-        "amount": amount,
-        "meetings": meetings,
-    }
-)
+            {
+                "source_type": source_type,
+                "description": evidence_text
+                or f"Relationship detected from {source_type}",
+                "calls": calls,
+                "duration": duration,
+                "transactions": transactions,
+                "amount": amount,
+                "meetings": meetings,
+            }
+        )
 
     # --------------------------------------------------------------
     # Narrative sources: pair names ONLY when they are explicitly
@@ -1992,7 +2903,15 @@ def health():
         "analysis_mode": "live-submitted-evidence",
     }
 
+@app.get("/api/investigations/{investigation_id}/blockchain/verify")
+def verify_investigation_blockchain(
+    investigation_id: str,
+):
+    result = verify_blockchain_integrity(
+        investigation_id
+    )
 
+    return result
 @app.get("/api/investigations")
 def list_investigations(
     authorization: Optional[str] = Header(None),
@@ -2304,16 +3223,32 @@ def save_investigation_sources(
 
     sources = normalize_source_payload(body.get("sources"))
 
-    # Persist the complete seven-source editor state in one request. Using a
-    # single bulk upsert avoids the race where several blur/autosave requests
-    # arrive out of order and an older three-source snapshot wins. Empty source
-    # rows are intentionally stored too, so the database always represents the
-    # full editor state for this investigation.
+    # Persist the complete seven-source editor state in one request.
     payload = []
+
     for source in sources:
+
         source_type = source.source_type.strip().upper()
+
+        # Do not create blockchain records for invalid source types
         if not source_type:
             continue
+
+        # ==========================================
+        # CREATE BLOCKCHAIN RECORD
+        # ==========================================
+
+        block = create_evidence_block(
+            investigation_id=investigation_id,
+            source_type=source_type,
+            title=(source.title or source_type.title()),
+            content=source.content or "",
+        )
+
+        # ==========================================
+        # PREPARE DATABASE PAYLOAD
+        # ==========================================
+
         payload.append(
             {
                 "investigation_id": investigation_id,
@@ -2321,15 +3256,23 @@ def save_investigation_sources(
                 "title": source.title or source_type.title(),
                 "content": source.content or "",
                 "language": source.language or "en",
+                # Blockchain metadata
+                "evidence_id": block["evidence_id"],
+                "evidence_hash": block["evidence_hash"],
                 "created_at": utc_now(),
                 "updated_at": utc_now(),
             }
         )
 
     if not payload:
-        return {"investigation_id": investigation_id, "sources": [], "saved_count": 0}
+        return {
+            "investigation_id": investigation_id,
+            "sources": [],
+            "saved_count": 0,
+        }
 
     try:
+
         result = (
             supabase.table("investigation_sources")
             .upsert(
@@ -2338,11 +3281,14 @@ def save_investigation_sources(
             )
             .execute()
         )
+
     except Exception as exc:
+
         print(f"Source bulk persistence failed: {exc}")
+
         raise HTTPException(
             status_code=500,
-            detail=f"Unable to save investigation sources: {exc}",
+            detail=(f"Unable to save investigation sources: {exc}"),
         )
 
     return {

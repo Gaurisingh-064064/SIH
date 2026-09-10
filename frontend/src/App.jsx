@@ -219,6 +219,9 @@ export default function App() {
   // tell "same investigator, token silently refreshed" apart from "a
   // different investigator actually signed in".
   const sessionUserIdRef = useRef(null);
+  const [blockchainStatus, setBlockchainStatus] = useState(null);
+  const [blockchainLoading, setBlockchainLoading] = useState(false);
+  const [blockchainError, setBlockchainError] = useState("");
 
   useEffect(() => {
     let mounted = true;
@@ -286,6 +289,45 @@ export default function App() {
       subscription.unsubscribe();
     };
   }, []);
+
+
+  async function verifyBlockchainIntegrity() {
+  if (!selected?.id) {
+    setBlockchainError("Please select an investigation first.");
+    return;
+  }
+
+  setBlockchainLoading(true);
+  setBlockchainError("");
+  setBlockchainStatus(null);
+
+  try {
+    const activeSession = await getUsableSession(session);
+
+    if (!activeSession?.access_token) {
+      throw new Error("Access token required. Please log in again.");
+    }
+
+    const data = await apiFetch(
+      `/api/investigations/${selected.id}/blockchain/verify`,
+      {
+        method: "GET",
+      },
+      activeSession
+    );
+
+    setBlockchainStatus(data);
+  } catch (err) {
+    console.error("Blockchain verification error:", err);
+
+    setBlockchainError(
+      err.message || "Unable to verify blockchain integrity."
+    );
+  } finally {
+    setBlockchainLoading(false);
+  }
+}
+
 
   async function loadProfile(userId, activeSession = session) {
     try {
@@ -1274,6 +1316,320 @@ export default function App() {
               <div className="stat-card"><span>CANDIDATE LINKS</span><strong>{analysis?.candidate_relationships?.length || 0}</strong><small>model-scored analytical leads</small></div>
               <div className="stat-card alert-stat"><span>SUSPICIOUS PATTERNS</span><strong>{analysis?.suspicious_patterns?.length || 0}</strong><small>requires investigator review</small></div>
             </section>
+
+            {/* =====================================================
+    BLOCKCHAIN INTEGRITY DASHBOARD
+===================================================== */}
+
+<section className="panel blockchain-panel">
+
+  <div className="section-header">
+    <div>
+      <div className="eyebrow">
+        EVIDENCE SECURITY
+      </div>
+
+      <h2>
+        🔐 Evidence Integrity & Blockchain
+      </h2>
+
+      <p>
+        Verify investigation evidence and blockchain
+        records for unauthorized modifications.
+      </p>
+    </div>
+
+    <button
+      type="button"
+      className="primary-button"
+      onClick={verifyBlockchainIntegrity}
+      disabled={
+        blockchainLoading || !selected?.id
+      }
+    >
+      {blockchainLoading
+        ? "Verifying..."
+        : "🔄 Verify Integrity"}
+    </button>
+  </div>
+
+
+  {/* ERROR */}
+
+  {blockchainError && (
+
+    <div className="error-box main-error">
+
+      <span>
+        ❌ {blockchainError}
+      </span>
+
+    </div>
+
+  )}
+
+
+  {/* DEFAULT STATE */}
+
+  {!blockchainStatus &&
+    !blockchainError &&
+    !blockchainLoading && (
+
+      <div className="empty-state">
+
+        <div className="empty-icon">
+          🔐
+        </div>
+
+        <strong>
+          Blockchain verification not run
+        </strong>
+
+        <p>
+          Verify the evidence chain to ensure
+          investigation data has not been modified.
+        </p>
+
+      </div>
+
+    )}
+
+
+  {/* LOADING */}
+
+  {blockchainLoading && (
+
+    <div className="empty-state">
+
+      <div className="empty-icon">
+        ⏳
+      </div>
+
+      <strong>
+        Verifying Blockchain...
+      </strong>
+
+      <p>
+        Checking evidence hashes and
+        blockchain integrity.
+      </p>
+
+    </div>
+
+  )}
+
+
+  {/* RESULT */}
+
+  {blockchainStatus && (
+
+    <>
+
+      {/* STATUS */}
+
+      <div
+        className={
+          blockchainStatus.valid
+            ? "blockchain-status verified"
+            : "blockchain-status invalid"
+        }
+      >
+
+        <div className="blockchain-status-icon">
+
+          {blockchainStatus.valid
+            ? "🟢"
+            : "🔴"}
+
+        </div>
+
+        <div>
+
+          <h3>
+
+            {blockchainStatus.valid
+              ? "Blockchain Verified"
+              : "Integrity Violation Detected"}
+
+          </h3>
+
+          <p>
+            {blockchainStatus.message}
+          </p>
+
+        </div>
+
+      </div>
+
+
+      {/* STATISTICS */}
+
+      <div className="stats-grid blockchain-stats">
+
+        <div className="stat-card">
+
+          <span>
+            TOTAL BLOCKS
+          </span>
+
+          <strong>
+            {blockchainStatus.total_blocks || 0}
+          </strong>
+
+          <small>
+            evidence records secured
+          </small>
+
+        </div>
+
+
+        <div className="stat-card">
+
+          <span>
+            VERIFIED BLOCKS
+          </span>
+
+          <strong>
+            {blockchainStatus.verified_blocks || 0}
+          </strong>
+
+          <small>
+            successfully validated
+          </small>
+
+        </div>
+
+
+        <div
+          className={
+            blockchainStatus.tampering_detected
+              ? "stat-card alert-stat"
+              : "stat-card"
+          }
+        >
+
+          <span>
+            EVIDENCE TAMPERING
+          </span>
+
+          <strong>
+
+            {blockchainStatus.tampering_detected
+              ? "YES"
+              : "NO"}
+
+          </strong>
+
+          <small>
+
+            {blockchainStatus.tampering_detected
+              ? "unauthorized changes detected"
+              : "no modification detected"}
+
+          </small>
+
+        </div>
+
+      </div>
+
+
+      {/* TAMPERED BLOCKS */}
+
+      {blockchainStatus.tampering_detected &&
+        blockchainStatus.tampered_blocks?.length > 0 && (
+
+          <div className="tampered-evidence">
+
+            <div className="section-header">
+
+              <div>
+
+                <div className="eyebrow">
+                  SECURITY ALERT
+                </div>
+
+                <h3>
+                  ⚠️ Tampered Evidence Detected
+                </h3>
+
+              </div>
+
+            </div>
+
+
+            {blockchainStatus.tampered_blocks.map(
+              (block, index) => (
+
+                <div
+                  className="tampered-item"
+                  key={
+                    `${block.evidence_id}-${index}`
+                  }
+                >
+
+                  <div>
+
+                    <strong>
+
+                      {block.title ||
+                        block.source_type ||
+                        "Unknown Evidence"}
+
+                    </strong>
+
+
+                    <small>
+
+                      Evidence ID:
+                      {" "}
+                      {block.evidence_id}
+
+                    </small>
+
+
+                    <small>
+
+                      Source:
+                      {" "}
+                      {block.source_type}
+
+                    </small>
+
+                  </div>
+
+
+                  <div className="tamper-errors">
+
+                    {block.errors?.map(
+                      (error, errorIndex) => (
+
+                        <div
+                          key={errorIndex}
+                        >
+
+                          🔴 {error}
+
+                        </div>
+
+                      )
+                    )}
+
+                  </div>
+
+                </div>
+
+              )
+            )}
+
+          </div>
+
+        )}
+
+    </>
+
+  )}
+
+</section>
 
             {analysis?.warnings?.length > 0 && (
               <div className="error-box main-error analysis-warning">
