@@ -1,215 +1,690 @@
-# SIH 2026 — Problem Statement 26189: AI-Powered Criminal Network Analysis
+README.md
 
-**Prototype:** NyayaNet
 
-NyayaNet is an authorized-investigator prototype for turning multiple intelligence sources into a structured, explainable criminal-network analysis workspace.
+🕵️ NyayaNet
+AI-Powered Criminal Network Analysis System
+Smart India Hackathon 2026 --- Problem Statement 26189
 
-The intended workflow is:
+NyayaNet is an AI-assisted investigative intelligence platform designed
+to help authorized investigators transform fragmented evidence into
+structured entities, candidate relationships, suspicious activity
+signals, and interactive criminal network insights.
 
-```text
-Investigator login
-      ↓
-Start new investigation / open ongoing / review closed
-      ↓
-Provide available intelligence sources
-  • FIR / police complaint
-  • police reports
-  • financial transaction records
-  • surveillance reports
-  • social-media intelligence
-  • criminal-history records
-      ↓
-Preserve source + hash
-      ↓
-NLP entity extraction + normalization
-  PERSON / LOCATION / VEHICLE / PHONE / ORG / EMAIL / BANK
-      ↓
-Candidate relationship generation
-      ↓
-ML relationship score
-      ↓
-Suspicious-pattern detection
-      ↓
-Graph analytics
-  • relationship map
-  • influential individuals
-  • suspicious activity signals
-      ↓
-Explainable investigator dashboard
-```
+The platform combines Natural Language Processing, Machine Learning,
+Graph Analytics, Evidence Integrity Verification, and Interactive
+Visualization to support faster and more explainable investigations.
 
-## Existing project structure
+✨ Overview
+Modern investigations often involve information distributed across
+multiple sources such as FIRs, police reports, call detail records,
+financial transactions, surveillance reports, social-media intelligence,
+and criminal-history records.
 
-The directory structure is intentionally unchanged. The main updates stay inside the existing `frontend/src`, `backend/app`, `backend/scripts`, `db`, `ml`, and `docs` files. The realistic India/NCR two-CSV dataset is stored in `backend/data/persons.csv` and `backend/data/relationships.csv`.
+Analyzing these sources manually makes it difficult to identify:
 
-## Architecture
+Hidden relationships between individuals
 
-```text
-React + Vite
-      │
-      ├── Supabase Auth (publishable key only)
-      │
-      └── FastAPI API (server-only Supabase service key)
-                │
-                ├── PostgreSQL / RLS
-                ├── source document storage metadata + SHA-256 hashes
-                ├── spaCy + regex entity extraction
-                ├── relationship classifier
-                ├── IsolationForest suspicious-pattern detector
-                └── NetworkX centrality analytics
-```
+Cross-source connections
 
-Never expose the Supabase service-role key in the browser.
+Repeated suspicious activities
 
-## Investigator experience
+Important or influential entities in a network
 
-After login, an authorized investigator can start a new investigation or select an ongoing/closed investigation from the sidebar.
+Time-based patterns and event sequences
 
-Starting an investigation opens a source-intake workspace. The investigator provides the available FIR, police-report, financial, surveillance, social-media, and criminal-history information. At least one source is required; sources that do not exist for a case can remain empty.
+Potential investigative leads
 
-NyayaNet preserves the original source text, extracts entities, creates candidate relationships when people co-occur across evidence, scores those candidates with the trained model, and flags unusual activity combinations. The graph and analytics are restricted to the selected investigation.
+NyayaNet addresses this problem by creating an investigation-centric
+intelligence workspace where multiple evidence sources can be ingested,
+analyzed, connected, and visualized.
 
-## Machine-learning models
+⚠️ NyayaNet is designed as an investigative decision-support and
+lead-generation prototype. Its outputs do not establish guilt or
+identify someone as a criminal.
 
-### Relationship model
+🎯 Key Features
+🔐 Secure Investigator Workspace
+Authorized investigator authentication
 
-The 600-person / 660-relationship synthetic dataset in `backend/data/relationships.csv` is used to train the relationship classifier. The model uses observable activity features including:
+Investigation-specific workspaces
 
-- phone-call frequency
-- total call duration
-- transaction count
-- total transaction value
-- meeting count
-- evidence/activity co-occurrence
-- source diversity
-- shared phone / vehicle / organization / location signals when available during live analysis
+Create and manage investigations
 
-`relationship_type`, `relationship_description`, and `ground_truth_confidence` are **not** used as model inputs.
+Ongoing and closed investigation states
 
-The output is a **candidate relationship confidence**, not a probability of guilt.
+Ownership checks for investigation access
 
-### Suspicious-pattern model
+Investigation-scoped analysis and graph data
 
-An IsolationForest model learns unusual combinations of activity features and complements transparent rules such as unusually frequent calls, repeated transactions, high aggregate transaction value, repeated meetings, and cross-source activity.
+📂 Multi-Source Intelligence Ingestion
+NyayaNet supports intelligence from multiple sources:
 
-### Influence analysis
+Source Supported Intelligence
 
-NetworkX is used to calculate degree centrality, betweenness centrality, and PageRank. These are structural network measures. They are not criminality scores.
+📄 FIR / Police Complaint FIR narratives, complaint text,
+witness statements
 
-## Train the models
+🛡️ Police Reports Investigation notes, reports and
+case records
 
+📞 Call Detail Records Calls, frequency, duration and
+communication patterns
+
+💰 Financial Transactions Transaction activity and financial
+links
+
+📹 Surveillance Reports Observations, movement and location
+information
+
+🌐 Social Media Intelligence Posts, messages, mentions and
+interactions
+
+PDF Support
+Investigators can upload PDF evidence. The system extracts readable text
+from supported PDFs and uses the extracted content for intelligence
+analysis.
+
+🧠 AI & Analytics Pipeline
+                    INVESTIGATION
+                         │
+                         ▼
+               MULTI-SOURCE EVIDENCE
+                         │
+                         ▼
+                 PDF / TEXT INGESTION
+                         │
+                         ▼
+                EVIDENCE HASHING
+                         │
+                         ▼
+              NLP ENTITY EXTRACTION
+                         │
+       ┌─────────────────┼─────────────────┐
+       ▼                 ▼                 ▼
+    PERSON            LOCATION          ORGANIZATION
+    PHONE             VEHICLE           EMAIL / BANK
+       │                 │                 │
+       └─────────────────┼─────────────────┘
+                         ▼
+            ENTITY NORMALIZATION
+                         │
+                         ▼
+          CANDIDATE RELATIONSHIP
+               GENERATION
+                         │
+                         ▼
+          MACHINE LEARNING SCORING
+                         │
+                         ▼
+        SUSPICIOUS ACTIVITY ANALYSIS
+                         │
+                         ▼
+             NETWORK GRAPH ANALYTICS
+                         │
+       ┌─────────────────┼─────────────────┐
+       ▼                 ▼                 ▼
+   RELATIONSHIPS     INFLUENCE       INVESTIGATIVE
+                    ANALYSIS            INSIGHTS
+🔍 Entity Extraction
+NyayaNet extracts and organizes intelligence entities from evidence.
+
+Supported Entity Types
+👤 Persons
+
+🏢 Organizations
+
+📍 Locations
+
+📞 Phone Numbers
+
+🚗 Vehicles
+
+📧 Email Addresses
+
+🏦 Bank Identifiers
+
+The backend uses spaCy NLP, regex-based extraction, and conservative
+fallback heuristics.
+
+🔗 Candidate Relationship Analysis
+When entities appear across evidence, NyayaNet generates candidate
+relationships for investigator review.
+
+The relationship model evaluates observable activity features such as:
+
+Phone call frequency
+
+Total call duration
+
+Transaction count
+
+Aggregate transaction value
+
+Meeting count
+
+Evidence and activity co-occurrence
+
+Source diversity
+
+Shared phone signals
+
+Shared vehicle signals
+
+Shared organization signals
+
+Shared location signals
+
+The result is an investigative confidence score, not a declaration
+of guilt.
+
+🚨 Suspicious Activity Detection
+NyayaNet identifies unusual or suspicious combinations of observable
+activities.
+
+Examples include:
+
+Repeated communication between connected entities
+
+Frequent transactions between linked individuals
+
+High aggregate transaction activity
+
+Repeated meetings
+
+Cross-source activity correlation
+
+Unusual combinations of communication, movement and financial
+activity
+
+These signals are presented as investigative leads requiring human
+review.
+
+⏱️ Temporal Pattern Analysis
+Temporal analysis helps investigators understand when and in what
+sequence events occur.
+
+NyayaNet can support analysis of:
+
+Event timing
+
+Activity frequency
+
+Repeated behavior
+
+Event sequences
+
+Communication before or after transactions
+
+Time correlation between activities
+
+Patterns occurring across multiple intelligence sources
+
+Example
+11:20 PM  → Person A calls Person B
+11:45 PM  → Financial transaction recorded
+12:10 AM  → Vehicle movement observed
+Next Day  → Both entities appear in a surveillance report
+When events from different sources occur in meaningful sequences or
+close time windows, they can form a candidate temporal pattern for
+investigator review.
+
+🕸️ Criminal Network Graph
+NyayaNet transforms extracted intelligence into an interactive network
+representation.
+
+Graph Capabilities
+Visual entity nodes
+
+Relationship links
+
+Candidate relationship confidence
+
+Person search
+
+Connected network inspection
+
+Influential entity analysis
+
+Evidence-backed relationship explanations
+
+Network Analytics
+The platform uses NetworkX for structural graph analysis, including:
+
+Degree Centrality
+
+Betweenness Centrality
+
+PageRank
+
+These metrics indicate structural importance within the observed
+network. They are not criminality scores.
+
+🔒 Evidence Integrity & Blockchain Verification
+NyayaNet includes an evidence-integrity layer to make changes
+detectable.
+
+Current Prototype Features
+SHA-256 evidence hashing
+
+Hash-linked blockchain records
+
+Investigation-specific evidence records
+
+Blockchain chain verification
+
+Evidence modification detection
+
+Evidence
+   │
+   ▼
+SHA-256 Hash
+   │
+   ▼
+Private Blockchain Record
+   │
+   ▼
+Previous Block Hash
+   │
+   ▼
+Integrity Verification
+Important
+The current blockchain implementation is a prototype integrity
+mechanism. A production law-enforcement deployment would require
+stronger evidence-preservation infrastructure such as append-only or
+WORM storage, independent audit copies, and appropriate operational
+controls.
+
+🏗️ System Architecture
+┌──────────────────────────────────────────────┐
+│              React + Vite Frontend           │
+│                                              │
+│  Dashboard • Sources • Analysis • Graph      │
+└───────────────────────┬──────────────────────┘
+                        │
+                        ▼
+┌──────────────────────────────────────────────┐
+│                 FastAPI Backend              │
+│                                              │
+│ Authentication • Evidence • Analysis APIs    │
+└───────────────────────┬──────────────────────┘
+                        │
+       ┌────────────────┼─────────────────┐
+       ▼                ▼                 ▼
+┌─────────────┐  ┌──────────────┐  ┌─────────────┐
+│ Supabase    │  │ NLP Engine   │  │ ML Models   │
+│ Auth / DB   │  │ spaCy/Regex  │  │ sklearn     │
+└─────────────┘  └──────────────┘  └─────────────┘
+       │                │                 │
+       └────────────────┼─────────────────┘
+                        ▼
+                 NetworkX Analytics
+                        │
+                        ▼
+             Interactive Network Graph
+🛠️ Technology Stack
+Frontend
+React 19
+
+Vite
+
+React Force Graph
+
+React Force Graph 2D
+
+PDF.js
+
+Supabase JavaScript Client
+
+Backend
+Python
+
+FastAPI
+
+Uvicorn
+
+Pydantic
+
+AI / Machine Learning
+spaCy
+
+scikit-learn
+
+pandas
+
+NumPy
+
+joblib
+
+Graph Analytics
+NetworkX
+
+Database & Authentication
+Supabase
+
+PostgreSQL
+
+Row Level Security architecture
+
+📁 Project Structure
+SIH/
+│
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   ├── styles.css
+│   │   └── lib/
+│   │       └── supabase.js
+│   ├── package.json
+│   └── .env
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── blockchain.py
+│   │   ├── nlp.py
+│   │   ├── security.py
+│   │   ├── config.py
+│   │   └── supabase_client.py
+│   │
+│   ├── scripts/
+│   ├── data/
+│   ├── requirements.txt
+│   └── .env
+│
+├── ml/
+│   ├── relationship_model.joblib
+│   ├── suspicious_pattern_model.joblib
+│   ├── train_relationship_model.py
+│   ├── train_best_relationship_model.py
+│   └── evaluation utilities
+│
+├── db/
+│
+├── docs/
+│   └── IMPLEMENTATION_PLAN.md
+│
+└── README.md
+🚀 Getting Started
+Prerequisites
+Make sure you have:
+
+Python 3.10+
+
+Node.js 18+
+
+npm
+
+A Supabase project
+
+spaCy English model
+
+⚙️ Backend Setup
+1. Navigate to the backend
+cd backend
+2. Create a virtual environment
+python -m venv .venv
+3. Activate the environment
+macOS / Linux
+
+source .venv/bin/activate
+Windows
+
+.venv\Scripts\activate
+4. Install dependencies
+pip install -r requirements.txt
+5. Install the spaCy model
+python -m spacy download en_core_web_sm
+6. Configure environment variables
+Create backend/.env using the provided example.
+
+Example:
+
+SUPABASE_URL=your_supabase_url
+SUPABASE_KEY=your_publishable_key
+SUPABASE_SERVICE_ROLE_KEY=your_server_only_service_role_key
+🔒 Never expose the Supabase service-role key in the frontend.
+
+7. Start the backend
+python -m uvicorn app.main:app --reload --port 8080
+Backend:
+
+http://127.0.0.1:8080
+Health Check:
+
+http://127.0.0.1:8080/health
+API Documentation:
+
+http://127.0.0.1:8080/docs
+💻 Frontend Setup
+1. Navigate to the frontend
+cd frontend
+2. Install dependencies
+npm install
+3. Configure environment variables
+Create frontend/.env:
+
+VITE_API_URL=http://localhost:8080
+4. Start the frontend
+npm run dev
+Open:
+
+http://localhost:5173
+🤖 Machine Learning
+NyayaNet includes a trained relationship analysis model for scoring
+candidate relationships.
+
+The project also includes utilities for:
+
+Generating realistic synthetic datasets
+
+Training relationship models
+
+Evaluating model performance
+
+Comparing relationship models
+
+Checking datasets
+
+Training
 From the project root:
 
-```bash
 cd backend
 python scripts/train_relationship.py
-```
+⚠️ Validation metrics generated using the included synthetic dataset
+must not be presented as real-world law-enforcement performance.
 
-This creates:
+🧪 Synthetic Dataset
+The demonstration dataset is designed for prototype development and
+testing.
 
-```text
-ml/relationship_model.joblib
-ml/suspicious_pattern_model.joblib
-ml/relationship_features.json
-```
+It includes synthetic:
 
-The validation numbers printed by the training script are for the synthetic demo dataset only and must not be presented as real-world law-enforcement performance.
+Indian identities
 
-## Run the backend
+NCR-focused locations
 
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m spacy download en_core_web_sm
-```
+Phone information
 
-Put the Supabase URL, publishable key, and **server-only** service-role key in `backend/.env`.
+Vehicle information
 
-Run on the port used by the current frontend setup:
+Organization information
 
-```bash
-python -m uvicorn app.main:app --port 8080
-```
+Masked bank identifiers
 
-Health check:
+FIR-related metadata
 
-```text
-http://127.0.0.1:8080/health
-```
+Communication activity
 
-API documentation:
+Transaction activity
 
-```text
-http://127.0.0.1:8080/docs
-```
+Meeting activity
 
-## Run the frontend
+Candidate relationship references
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+The dataset is synthetic and intended for demonstration purposes.
 
-Set:
+🔌 Key API Capabilities
+Capability Endpoint
 
-```env
-VITE_API_URL=http://localhost:8080
-```
+Health Check GET /health
+List Investigations GET /api/investigations
+Create Investigation POST /api/investigations
+Close Investigation POST /api/investigations/{id}/close
+Investigation Workspace GET /api/investigations/{id}/workspace
+Get Sources GET /api/investigations/{id}/sources
+Upload Source PDF POST /api/investigations/{id}/sources/upload
+Save Sources PUT /api/investigations/{id}/sources
+Analyze Sources POST /api/investigations/{id}/analyze-sources
+Get Analysis GET /api/investigations/{id}/analysis
+Extract NLP Entities POST /api/nlp/extract
+Get Persons GET /api/investigations/{id}/persons
+Get Relationships GET /api/investigations/{id}/relationships
+Get Graph GET /api/investigations/{id}/graph
+Search Person GET /api/investigations/{id}/persons/search
+Inspect Network GET /api/investigations/{id}/network/{person_id}
+Verify Blockchain GET /api/investigations/{id}/blockchain/verify
 
-in `frontend/.env`.
+🎬 Demo Workflow
+A typical demonstration flow is:
 
-## Supabase data model
+1️⃣ Investigator Authentication
+The authorized investigator logs into the NyayaNet workspace.
 
-Core live tables:
+2️⃣ Create Investigation
+Create a new investigation with:
 
-- `profiles`
-- `investigations`
-- `documents`
-- `persons`
-- `person_relationships`
-- `analysis_runs`
-- `audit_log`
+Investigation title
 
-Legacy `entities` and `network_links` remain in the schema for compatibility with the original starter.
+Case description
 
-## Synthetic dataset
+3️⃣ Add Intelligence Sources
+Upload or provide intelligence from one or more available sources.
 
-The supplied demonstration dataset contains:
+4️⃣ Evidence Integrity
+The evidence content is hashed and recorded for integrity verification.
 
-- 600 synthetic Indian persons
-- NCR-focused locations
-- names, phones, ages, vehicles, organizations, masked bank identifiers, crime-recorded fields, FIR text and language metadata
-- 660 synthetic relationship records
-- phone-call details, transaction details, meeting details
-- synthetic relationship-type labels such as Friend, Family, Business Associate, Partner, etc.
+5️⃣ Run AI Analysis
+NyayaNet processes the available intelligence and extracts entities.
 
-Those relationship-type labels are demo reference labels. In a new investigation, NyayaNet should generate a **candidate relationship** from the observed evidence rather than inventing a social relationship that has not been supplied by an authoritative source.
+6️⃣ Review Relationships
+Candidate relationships are generated and scored.
 
-## Security / integrity framing
+7️⃣ Review Suspicious Signals
+Potentially unusual activity patterns are surfaced for investigator
+review.
 
-SHA-256 content and hash-chain records make later changes detectable; hashing alone is not an immutable storage system. A production deployment would need an append-only/WORM or equivalent evidence-preservation layer and independent audit copies.
+8️⃣ Explore the Network
+Use the interactive graph to inspect:
 
-The relationship model is an investigative lead generator. It must not be described as identifying criminals or proving guilt.
+People
 
-## Demo sequence for SIH
+Connections
 
-1. Authorized investigator logs in.
-2. Start a new investigation.
-3. Enter a title, scope, and one or more intelligence sources.
-4. Run source analysis.
-5. Review extracted entities.
-6. Review candidate relationship scores.
-7. Review suspicious-activity signals.
-8. Inspect influential individuals.
-9. Search a person in the graph and inspect all connected relationships.
-10. Hover a node to inspect person metadata and click a relationship to inspect its evidence explanation.
-11. Close the investigation when the case is complete.
+Relationship confidence
 
-## Important prototype limitations
+Network influence
 
-The NLP baseline is strongest on English and structured patterns. Hindi and Punjabi are preserved with language metadata, while dedicated Indic-language NER/transliteration models remain a future improvement.
+9️⃣ Verify Evidence Integrity
+Run blockchain verification to check the recorded evidence chain.
 
-Entity resolution from free-form evidence is conservative: when a document mentions multiple people and several shared attributes, the system does not blindly assign the first phone/vehicle/organization to every person. This reduces false attribution.
+🔐 Security Principles
+NyayaNet follows several important security principles:
+
+Authentication before investigation access
+
+Authorization checks for protected investigations
+
+Investigation ownership verification
+
+Server-side service credentials
+
+Evidence hashing
+
+Hash-linked integrity records
+
+Investigation-scoped data
+
+Explainable analytical outputs
+
+⚖️ Responsible AI & Limitations
+NyayaNet is an investigative assistance system, not an autonomous
+decision-making system.
+
+Important Limitations
+AI outputs require investigator review
+
+Candidate relationship scores do not prove relationships
+
+Network centrality does not indicate criminality
+
+Suspicious activity signals are investigative leads
+
+Free-form entity extraction can contain errors
+
+NLP quality depends on language and source quality
+
+English extraction is currently the strongest baseline
+
+Hindi and Punjabi are preserved with language metadata, while
+dedicated Indic-language NLP models remain a future improvement
+
+The included ML dataset is synthetic
+
+🔮 Future Enhancements
+Advanced multilingual Indic-language NLP
+
+OCR for scanned PDFs
+
+Stronger entity resolution and deduplication
+
+Real-time intelligence ingestion
+
+Advanced temporal analytics
+
+Improved anomaly detection
+
+Geographic intelligence and map visualization
+
+Role-based investigation collaboration
+
+Production-grade immutable evidence storage
+
+Enhanced explainability for ML outputs
+
+🏆 Smart India Hackathon
+Smart India Hackathon 2026
+
+Problem Statement
+PS 26189 --- AI-Powered Criminal Network Analysis System
+
+NyayaNet is developed as a prototype to demonstrate how AI, NLP, Machine
+Learning, evidence integrity mechanisms, and graph analytics can support
+authorized investigators in discovering meaningful connections from
+fragmented intelligence.
+
+📌 Disclaimer
+This project is a prototype developed for educational and hackathon
+purposes.
+
+It is not intended to:
+
+Replace investigators
+
+Determine guilt
+
+Automatically classify individuals as criminals
+
+Make legal or enforcement decisions without human review
+
+All analytical outputs should be treated as investigative leads and
+reviewed using appropriate legal, procedural, and ethical safeguards.
+
+::: {align="center"}
+
+🕵️ NyayaNet
+Turning fragmented intelligence into explainable investigative
+insights.
+
+Built for Smart India Hackathon 2026 🇮🇳
+:::
