@@ -440,107 +440,169 @@ export default function App() {
     setUploadedFiles({});
   }
 
-  async function createInvestigation(event) {
-    event.preventDefault();
-    setError("");
-    if (!newTitle.trim()) {
-      setError("Investigation title is required.");
-      return;
-    }
-    const filledSources = SOURCE_TYPES.filter((source) => newSources[source.key]?.trim());
-    if (filledSources.length === 0) {
-      setError("Add at least one intelligence source before starting the investigation.");
-      return;
-    }
-
-    setCreating(true);
-    try {
-      const created = await apiFetch(
-        "/api/investigations",
-        {
-          method: "POST",
-          body: JSON.stringify({
-            title: newTitle.trim(),
-            description: newDescription.trim(),
-          }),
-        },
-        session
-      );
-
-      setInvestigations((prev) => [created, ...prev]);
-      setSelected(created);
-      setShowCreateModal(false);
-      setNewTitle("");
-      setNewDescription("");
-      setNewSources({ ...EMPTY_SOURCE });
-      setNewUploadedFiles({});
-      resetCaseState();
-
-      const sources = filledSources.map((source) => ({
-        source_type: source.key,
-        title: source.label,
-        content: newSources[source.key],
-        language: source.key === "FIR" ? newFirLanguage : "en",
-      }));
-
-      await saveSourcesForInvestigation(created.id, newSources, newFirLanguage);
-
-      const result = await apiFetch(
-        `/api/investigations/${created.id}/analyze-sources`,
-        { method: "POST", body: JSON.stringify({ sources }) },
-        session
-      );
-      setAnalysis(result);
-      setAnalysisGraph(result.graph || { nodes: [], links: [] });
-      setGraph(result.graph || { nodes: [], links: [] });
-      setAnalysisStale(false);
-      setEditingSources({});
-      await loadInvestigations();
-    } catch (err) {
-      setError(err.message || "Unable to start investigation.");
-    } finally {
-      setCreating(false);
-    }
+ async function createInvestigation(event) {
+  event.preventDefault();
+  setError("");
+  if (!newTitle.trim()) {
+    setError("Investigation title is required.");
+    return;
   }
+  const filledSources = SOURCE_TYPES.filter((source) => newSources[source.key]?.trim());
+  if (filledSources.length === 0) {
+    setError("Add at least one intelligence source before starting the investigation.");
+    return;
+  }
+
+  setCreating(true);
+  try {
+    const created = await apiFetch(
+      "/api/investigations",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          title: newTitle.trim(),
+          description: newDescription.trim(),
+        }),
+      },
+      session
+    );
+
+    setInvestigations((prev) => [created, ...prev]);
+    setShowCreateModal(false);
+
+    // Save the sources BEFORE selecting the investigation. setSelected()
+    // triggers the workspace GET effect, and if that fires before this
+    // PUT lands, it reads back an empty case and wipes the UI state.
+    await saveSourcesForInvestigation(
+      created.id,
+      newSources,
+      newFirLanguage,
+      newUploadedFiles
+    );
+
+    // Run the analysis pipeline now, as the modal promises ("Create &
+    // Analyze"). Without this, sources are saved but never analyzed
+    // until the user separately clicks "Run Intelligence Analysis".
+    const sourcesForAnalysis = filledSources.map((source) => ({
+      source_type: source.key,
+      title: newUploadedFiles[source.key] || source.label,
+      content: String(newSources[source.key] || ""),
+      language: source.key === "FIR" ? (newFirLanguage || "en") : "en",
+    }));
+
+    let analysisResult = null;
+    try {
+      analysisResult = await apiFetch(
+        `/api/investigations/${created.id}/analyze-sources`,
+        { method: "POST", body: JSON.stringify({ sources: sourcesForAnalysis }) },
+        session
+      );
+    } catch (err) {
+      console.error("Initial analysis failed:", err);
+      // Don't block investigation creation on analysis failure — the
+      // investigator can retry from the workspace.
+    }
+
+    setNewTitle("");
+    setNewDescription("");
+    setNewSources({ ...EMPTY_SOURCE });
+    setNewUploadedFiles({});
+    resetCaseState();
+
+    setSelected(created); // now safe — workspace fetch will see the saved sources
+
+    setAnalysis(analysisResult);
+    setAnalysisGraph(analysisResult?.graph || { nodes: [], links: [] });
+    setAnalysisStale(false);
+    setEditingSources({});
+    await loadInvestigations();
+  } catch (err) {
+    setError(err.message || "Unable to start investigation.");
+  } finally {
+    setCreating(false);
+  }
+}
 
 
   async function handleExistingSourcePdfUpload(sourceKey, file) {
-    if (!file) return;
+  if (!file) return;
 
-    setError("");
-    setPdfUploading((prev) => ({ ...prev, [sourceKey]: true }));
+  setError("");
+  setPdfUploading((prev) => ({
+    ...prev,
+    [sourceKey]: true,
+  }));
 
-    try {
-      const extractedText = await extractPdfText(file);
+  try {
+    // Extract text from PDF
+    const extractedText = await extractPdfText(file);
 
-      sourceDraftsRef.current = {
-        ...sourceDraftsRef.current,
-        [sourceKey]: extractedText,
-      };
-
-      setSourceDrafts((prev) => ({
-        ...prev,
-        [sourceKey]: extractedText,
-      }));
-
-      setUploadedFiles((prev) => ({
-        ...prev,
-        [sourceKey]: file.name,
-      }));
-
-      setEditingSources((prev) => ({
-        ...prev,
-        [sourceKey]: true,
-      }));
-
-      setAnalysisStale(true);
-      setSourceSaveStatus("PDF text extracted — save or run analysis");
-    } catch (err) {
-      setError(err.message || "Unable to extract text from the PDF.");
-    } finally {
-      setPdfUploading((prev) => ({ ...prev, [sourceKey]: false }));
+    if (!extractedText || !extractedText.trim()) {
+      throw new Error("No readable text was found in this PDF.");
     }
+
+    // Create updated drafts
+    const updatedDrafts = {
+      ...sourceDraftsRef.current,
+      [sourceKey]: extractedText,
+    };
+
+    // Update ref immediately
+    sourceDraftsRef.current = updatedDrafts;
+
+    // Update React state
+    setSourceDrafts((prev) => ({
+      ...prev,
+      [sourceKey]: extractedText,
+    }));
+
+    // Store uploaded file name
+    setUploadedFiles((prev) => ({
+      ...prev,
+      [sourceKey]: file.name,
+    }));
+
+    // IMPORTANT: SAVE EXTRACTED PDF TEXT TO BACKEND
+    if (selected?.id) {
+      await saveSourcesForInvestigation(
+        selected.id,
+        updatedDrafts
+      );
+    } else {
+      throw new Error("No active investigation selected.");
+    }
+
+    setEditingSources((prev) => ({
+      ...prev,
+      [sourceKey]: false,
+    }));
+
+    setAnalysisStale(true);
+
+    setSourceSaveStatus(
+      "PDF uploaded and saved successfully"
+    );
+
+    console.log(
+      "PDF saved successfully:",
+      sourceKey,
+      extractedText.length
+    );
+
+  } catch (err) {
+    console.error("PDF upload error:", err);
+
+    setError(
+      err.message ||
+      "Unable to extract or save the PDF."
+    );
+  } finally {
+    setPdfUploading((prev) => ({
+      ...prev,
+      [sourceKey]: false,
+    }));
   }
+}
 
   async function handleNewSourcePdfUpload(sourceKey, file) {
     if (!file) return;
@@ -567,43 +629,127 @@ export default function App() {
     }
   }
 
-  async function analyzeSourcesForExistingCase() {
-    if (!selected) return;
-    const latestDrafts = { ...sourceDraftsRef.current };
-    const filled = SOURCE_TYPES.filter((source) => latestDrafts[source.key]?.trim());
-    if (filled.length === 0) {
-      setError("Add at least one source before running analysis.");
-      return;
-    }
-    setAnalysisLoading(true);
-    setError("");
-    try {
-      const sources = filled.map((source) => ({
-        source_type: source.key,
-        title: source.label,
-        content: latestDrafts[source.key],
-        language: source.key === "FIR" ? sourceLanguage : "en",
-      }));
-      await saveSourcesForInvestigation(selected.id, latestDrafts, sourceLanguageRef.current);
-
-      const result = await apiFetch(
-        `/api/investigations/${selected.id}/analyze-sources`,
-        { method: "POST", body: JSON.stringify({ sources }) },
-        session
-      );
-      setAnalysis(result);
-      setAnalysisGraph(result.graph || { nodes: [], links: [] });
-      setGraph(result.graph || { nodes: [], links: [] });
-      setAnalysisStale(false);
-      setEditingSources({});
-      await loadInvestigations();
-    } catch (err) {
-      setError(err.message || "Source analysis failed.");
-    } finally {
-      setAnalysisLoading(false);
-    }
+  
+     async function analyzeSourcesForExistingCase() {
+  if (!selected) {
+    setError("Please select an investigation first.");
+    return;
   }
 
+  setAnalysisLoading(true);
+  setError("");
+
+  try {
+    // Always use the latest source data
+    const latestDrafts = {
+      ...sourceDraftsRef.current,
+    };
+
+    // Get all sources that actually contain data
+    const filledSources = SOURCE_TYPES.filter((source) => {
+      const content = latestDrafts[source.key];
+
+      return (
+        typeof content === "string" &&
+        content.trim().length > 0
+      );
+    });
+
+    if (filledSources.length === 0) {
+      throw new Error(
+        "Please upload or add at least one intelligence source before running analysis."
+      );
+    }
+
+    // Prepare sources for backend
+    const sources = filledSources.map((source) => ({
+      source_type: source.key,
+
+      title:
+        uploadedFiles[source.key] ||
+        source.label,
+
+      content: String(
+        latestDrafts[source.key] || ""
+      ),
+
+      language:
+        source.key === "FIR"
+          ? sourceLanguageRef.current || "en"
+          : "en",
+    }));
+
+    console.log(
+      "Sending sources for analysis:",
+      sources
+    );
+
+    // Save sources first
+    await saveSourcesForInvestigation(
+      selected.id,
+      latestDrafts,
+      sourceLanguageRef.current
+    );
+
+    console.log(
+      "Sources saved successfully"
+    );
+
+    // Run analysis
+    const result = await apiFetch(
+      `/api/investigations/${selected.id}/analyze-sources`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sources,
+        }),
+      },
+      session
+    );
+
+    console.log(
+      "Analysis result:",
+      result
+    );
+
+    // Store analysis
+    setAnalysis(result);
+
+    setAnalysisGraph(
+      result?.graph || {
+        nodes: [],
+        links: [],
+      }
+    );
+
+    setEditingSources({});
+    setAnalysisStale(false);
+
+    setSourceSaveStatus(
+      "Analysis completed"
+    );
+
+  } catch (err) {
+
+    console.error(
+      "Analysis error:",
+      err
+    );
+
+    setError(
+      err.message ||
+      "Source analysis failed."
+    );
+
+  } finally {
+
+    setAnalysisLoading(false);
+
+  }
+}
+
+      
+  
   async function analyzeFIR() {
     if (!selected || !firText.trim()) {
       setError("Select an investigation and enter FIR text.");
@@ -797,7 +943,10 @@ export default function App() {
         );
 
         const drafts = { ...EMPTY_SOURCE };
-        let firLanguage = "en";
+
+const restoredUploadedFiles = {};
+
+let firLanguage = "en";
 
         persistedSources.forEach((source) => {
           const sourceType = String(
@@ -813,6 +962,27 @@ export default function App() {
           if (Object.prototype.hasOwnProperty.call(drafts, sourceType)) {
             drafts[sourceType] = String(content || "");
           }
+          if (
+  Object.prototype.hasOwnProperty.call(
+    drafts,
+    sourceType
+  ) &&
+  String(content || "").trim()
+) {
+
+  const title =
+    source?.title ||
+    "";
+
+  if (title) {
+
+    restoredUploadedFiles[
+      sourceType
+    ] = title;
+
+  }
+
+}
           if (sourceType === "FIR" && source?.language) {
             firLanguage = source.language;
           }
@@ -821,6 +991,9 @@ export default function App() {
         sourceDraftsRef.current = drafts;
         sourceLanguageRef.current = firLanguage;
         setSourceDrafts(drafts);
+        setUploadedFiles(
+  restoredUploadedFiles
+);
         setSourceLanguage(firLanguage);
         sourceHydratedRef.current = true;
         hydratedCaseRef.current = selected.id;
@@ -865,33 +1038,110 @@ export default function App() {
     return () => { cancelled = true; };
   }, [selected?.id, session?.access_token]);
 
-  async function saveSourcesForInvestigation(investigationId, drafts = sourceDraftsRef.current, firLanguage = sourceLanguageRef.current) {
-    if (!investigationId) return;
+  async function saveSourcesForInvestigation(
+  investigationId,
+  drafts = sourceDraftsRef.current,
+  firLanguage = sourceLanguageRef.current,
+  fileNames = uploadedFiles
+) {
+  if (!investigationId) return;
 
-    const snapshot = { ...EMPTY_SOURCE, ...(drafts || {}) };
-    const sources = SOURCE_TYPES.map((source) => ({
+  const snapshot = {
+    ...EMPTY_SOURCE,
+    ...(drafts || {}),
+  };
+
+  const sources = SOURCE_TYPES
+    .filter((source) =>
+      String(snapshot[source.key] || "").trim()
+    )
+    .map((source) => ({
       source_type: source.key,
-      title: source.label,
-      content: String(snapshot[source.key] || ""),
-      language: source.key === "FIR" ? (firLanguage || "en") : "en",
+
+      title:
+        fileNames?.[source.key] ||
+        source.label,
+
+      content:
+        String(
+          snapshot[source.key] || ""
+        ),
+
+      language:
+        source.key === "FIR"
+          ? firLanguage || "en"
+          : "en",
     }));
 
-    sourceSaveInFlightRef.current = sourceSaveInFlightRef.current
+  sourceSaveInFlightRef.current =
+    sourceSaveInFlightRef.current
       .catch(() => {})
       .then(async () => {
+
         setSourceSaveStatus("Saving…");
-        const activeSession = await getUsableSession(session);
-        if (!activeSession?.access_token) throw new Error("Access token required");
-        await apiFetch(
-          `/api/investigations/${investigationId}/sources`,
-          { method: "PUT", body: JSON.stringify({ sources }) },
-          activeSession
-        );
+
+        const activeSession =
+          await getUsableSession(session);
+
+        if (!activeSession?.access_token) {
+          throw new Error(
+            "Access token required"
+          );
+        }
+
+        const result =
+          await apiFetch(
+            `/api/investigations/${investigationId}/sources`,
+            {
+              method: "PUT",
+              body: JSON.stringify({
+                sources,
+              }),
+            },
+            activeSession
+          );
+
+        const restoredFiles = {};
+
+        (
+          result?.sources || []
+        ).forEach((item) => {
+
+          const type =
+            String(
+              item?.source_type || ""
+            )
+              .trim()
+              .toUpperCase();
+
+          if (
+            type &&
+            item?.title &&
+            item?.content
+          ) {
+            restoredFiles[type] =
+              item.title;
+          }
+
+        });
+
+        if (
+          Object.keys(restoredFiles).length
+        ) {
+
+          setUploadedFiles((prev) => ({
+            ...prev,
+            ...restoredFiles,
+          }));
+
+        }
+
         setSourceSaveStatus("Saved");
+
       });
 
-    return sourceSaveInFlightRef.current;
-  }
+  return sourceSaveInFlightRef.current;
+}
 
   useEffect(() => {
     if (
@@ -1132,8 +1382,8 @@ export default function App() {
 
       return Boolean(graphNames && strongestNames && graphNames === strongestNames);
     });
+  
   };
-
   if (loading) {
     return (
       <div className="app-shell center-screen">
@@ -1691,10 +1941,28 @@ export default function App() {
                         />
                       </label>
                       {uploadedFiles[source.key] && (
-                        <small className="uploaded-file-name">
-                          PDF loaded: {uploadedFiles[source.key]}
-                        </small>
-                      )}
+
+  <div className="uploaded-file-info">
+
+    <span className="pdf-icon">
+      📄
+    </span>
+
+    <div>
+
+      <small>
+        UPLOADED SOURCE
+      </small>
+
+      <strong>
+        {uploadedFiles[source.key]}
+      </strong>
+
+    </div>
+
+  </div>
+
+)}
                     </div>
 
                     <textarea

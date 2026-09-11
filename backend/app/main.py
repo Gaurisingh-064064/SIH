@@ -290,16 +290,13 @@ def get_investigation_chain(
 
     try:
         result = (
-            supabase
-            .table("investigation_blockchain")
+            supabase.table("investigation_blockchain")
             .select("*")
             .eq(
                 "investigation_id",
                 investigation_id,
             )
-            .order(
-                "block_index"
-            )
+            .order("block_index")
             .execute()
         )
 
@@ -317,13 +314,9 @@ def get_investigation_chain(
     # Fallback to memory
 
     if investigation_id not in BLOCKCHAIN_EVIDENCE_LEDGER:
-        BLOCKCHAIN_EVIDENCE_LEDGER[
-            investigation_id
-        ] = []
+        BLOCKCHAIN_EVIDENCE_LEDGER[investigation_id] = []
 
-    return BLOCKCHAIN_EVIDENCE_LEDGER[
-        investigation_id
-    ]
+    return BLOCKCHAIN_EVIDENCE_LEDGER[investigation_id]
 
 
 def create_evidence_block(
@@ -346,9 +339,7 @@ def create_evidence_block(
     # GENERATE EVIDENCE HASH
     # -------------------------------------------------
 
-    evidence_hash = generate_evidence_hash(
-        content
-    )
+    evidence_hash = generate_evidence_hash(content)
 
     evidence_id = generate_evidence_id(
         investigation_id,
@@ -360,9 +351,7 @@ def create_evidence_block(
     # GET EXISTING BLOCKCHAIN
     # -------------------------------------------------
 
-    chain = get_investigation_chain(
-        investigation_id
-    )
+    chain = get_investigation_chain(investigation_id)
 
     # -------------------------------------------------
     # PREVENT DUPLICATE BLOCKS
@@ -370,10 +359,7 @@ def create_evidence_block(
 
     for existing_block in chain:
 
-        if (
-            existing_block.get("evidence_id")
-            == evidence_id
-        ):
+        if existing_block.get("evidence_id") == evidence_id:
             return existing_block
 
     # -------------------------------------------------
@@ -390,20 +376,20 @@ def create_evidence_block(
 
         last_block = chain[-1]
 
-        block_index = int(
-            last_block.get(
-                "block_index",
+        block_index = (
+            int(
                 last_block.get(
-                    "index",
-                    len(chain) - 1,
-                ),
+                    "block_index",
+                    last_block.get(
+                        "index",
+                        len(chain) - 1,
+                    ),
+                )
             )
-        ) + 1
-
-        previous_hash = (
-            last_block.get("block_hash")
-            or "0" * 64
+            + 1
         )
+
+        previous_hash = last_block.get("block_hash") or "0" * 64
 
     # -------------------------------------------------
     # CREATE BLOCK DATA
@@ -416,12 +402,8 @@ def create_evidence_block(
         "timestamp": timestamp,
         "investigation_id": investigation_id,
         "evidence_id": evidence_id,
-        "source_type": (
-            source_type or ""
-        ).upper(),
-        "title": (
-            title or "Evidence"
-        ),
+        "source_type": (source_type or "").upper(),
+        "title": (title or "Evidence"),
         "evidence_hash": evidence_hash,
         "previous_hash": previous_hash,
     }
@@ -430,9 +412,7 @@ def create_evidence_block(
     # GENERATE BLOCK HASH
     # -------------------------------------------------
 
-    block_hash = calculate_block_hash(
-        block
-    )
+    block_hash = calculate_block_hash(block)
 
     block["block_hash"] = block_hash
 
@@ -448,12 +428,8 @@ def create_evidence_block(
             "investigation_id": investigation_id,
             "block_index": block_index,
             "evidence_id": evidence_id,
-            "source_type": (
-                source_type or ""
-            ).upper(),
-            "title": (
-                title or "Evidence"
-            ),
+            "source_type": (source_type or "").upper(),
+            "title": (title or "Evidence"),
             "evidence_hash": evidence_hash,
             "previous_hash": previous_hash,
             "block_hash": block_hash,
@@ -461,23 +437,17 @@ def create_evidence_block(
         }
 
         (
-            supabase
-            .table("investigation_blockchain")
+            supabase.table("investigation_blockchain")
             .upsert(
                 blockchain_payload,
-                on_conflict=(
-                    "investigation_id,"
-                    "evidence_id"
-                ),
+                on_conflict=("investigation_id," "evidence_id"),
             )
             .execute()
         )
 
         database_saved = True
 
-        print(
-            "Blockchain block saved to Supabase"
-        )
+        print("Blockchain block saved to Supabase")
 
     except Exception as exc:
 
@@ -492,54 +462,32 @@ def create_evidence_block(
 
     if not database_saved:
 
-        if (
-            investigation_id
-            not in BLOCKCHAIN_EVIDENCE_LEDGER
-        ):
-            BLOCKCHAIN_EVIDENCE_LEDGER[
-                investigation_id
-            ] = []
+        if investigation_id not in BLOCKCHAIN_EVIDENCE_LEDGER:
+            BLOCKCHAIN_EVIDENCE_LEDGER[investigation_id] = []
 
-        memory_chain = (
-            BLOCKCHAIN_EVIDENCE_LEDGER[
-                investigation_id
-            ]
-        )
+        memory_chain = BLOCKCHAIN_EVIDENCE_LEDGER[investigation_id]
 
         duplicate_found = False
 
         for existing_block in memory_chain:
 
-            if (
-                existing_block.get(
-                    "evidence_id"
-                )
-                == evidence_id
-            ):
+            if existing_block.get("evidence_id") == evidence_id:
                 duplicate_found = True
                 break
 
         if not duplicate_found:
 
-            memory_chain.append(
-                block
-            )
+            memory_chain.append(block)
 
     # -------------------------------------------------
     # LOG BLOCK CREATION
     # -------------------------------------------------
 
-    print(
-        "\n=============================="
-    )
+    print("\n==============================")
 
-    print(
-        "BLOCKCHAIN EVIDENCE ADDED"
-    )
+    print("BLOCKCHAIN EVIDENCE ADDED")
 
-    print(
-        "=============================="
-    )
+    print("==============================")
 
     print(
         "Investigation ID:",
@@ -576,13 +524,12 @@ def create_evidence_block(
         database_saved,
     )
 
-    print(
-        "==============================\n"
-    )
+    print("==============================\n")
 
     # IMPORTANT
 
     return block
+
 
 def verify_blockchain_integrity(
     investigation_id: str,
@@ -598,16 +545,13 @@ def verify_blockchain_integrity(
 
     try:
         response = (
-            supabase
-            .table("investigation_blockchain")
+            supabase.table("investigation_blockchain")
             .select("*")
             .eq(
                 "investigation_id",
                 investigation_id,
             )
-            .order(
-                "block_index"
-            )
+            .order("block_index")
             .execute()
         )
 
@@ -644,11 +588,8 @@ def verify_blockchain_integrity(
     try:
 
         sources_response = (
-            supabase
-            .table("investigation_sources")
-            .select(
-                "source_type, title, content"
-            )
+            supabase.table("investigation_sources")
+            .select("source_type, title, content")
             .eq(
                 "investigation_id",
                 investigation_id,
@@ -656,9 +597,7 @@ def verify_blockchain_integrity(
             .execute()
         )
 
-        current_sources = (
-            sources_response.data or []
-        )
+        current_sources = sources_response.data or []
 
     except Exception as exc:
 
@@ -673,7 +612,7 @@ def verify_blockchain_integrity(
     # CREATE SOURCE LOOKUP
     # ------------------------------------------
 
-    sources_by_type = {}
+    sources_by_type: Dict[str, List[Dict[str, Any]]] = {}
 
     for source in current_sources:
 
@@ -688,9 +627,7 @@ def verify_blockchain_integrity(
 
         if source_type:
 
-            sources_by_type[
-                source_type
-            ] = source
+            sources_by_type.setdefault(source_type, []).append(source)
 
     invalid_blocks = []
 
@@ -709,92 +646,69 @@ def verify_blockchain_integrity(
             )
         )
 
-        evidence_id = (
-            block.get(
-                "evidence_id",
-                "",
-            )
+        evidence_id = block.get(
+            "evidence_id",
+            "",
         )
 
-        evidence_hash = (
-            block.get(
-                "evidence_hash",
-                "",
-            )
+        evidence_hash = block.get(
+            "evidence_hash",
+            "",
         )
 
-        previous_hash = (
-            block.get(
-                "previous_hash",
-                "",
-            )
+        previous_hash = block.get(
+            "previous_hash",
+            "",
         )
 
-        stored_block_hash = (
-            block.get(
-                "block_hash",
-                "",
-            )
+        stored_block_hash = block.get(
+            "block_hash",
+            "",
         )
 
-        timestamp = (
-            block.get(
-                "timestamp",
-                "",
-            )
+        timestamp = block.get(
+            "timestamp",
+            "",
         )
 
-        source_type = (
-            block.get(
-                "source_type",
-                "",
-            )
+        source_type = block.get(
+            "source_type",
+            "",
         )
 
-        title = (
-            block.get(
-                "title",
-                "Evidence",
-            )
+        title = block.get(
+            "title",
+            "Evidence",
         )
 
         errors = []
-                # ------------------------------------------
+        # ------------------------------------------
         # 3. VERIFY ACTUAL EVIDENCE CONTENT
         # ------------------------------------------
 
-        normalized_source_type = (
-            source_type
-            .strip()
-            .upper()
-        )
+        normalized_source_type = source_type.strip().upper()
 
-        current_source = sources_by_type.get(
-            normalized_source_type
-        )
+        current_source_candidates = sources_by_type.get(normalized_source_type, [])
 
-        if current_source is None:
+        if not current_source_candidates:
 
-            errors.append(
-                "Original evidence source is missing"
-            )
+            errors.append("Original evidence source is missing")
 
         else:
 
-            current_content = (
-                current_source.get(
-                    "content",
-                    ""
-                )
+            # A source_type can have more than one evidence document (e.g. a
+            # re-uploaded/edited source, or two documents of the same
+            # category). Only flag tampering if NONE of the current sources
+            # of this type still hash to what was recorded on-chain for this
+            # block — matching against just the most-recently-loaded source
+            # produced false "modified" flags for untouched evidence.
+            match_found = any(
+                generate_evidence_hash(candidate.get("content", "") or "")
+                == evidence_hash
+                for candidate in current_source_candidates
             )
 
-            current_evidence_hash = (
-                generate_evidence_hash(
-                    current_content
-                )
-            )
-
-            if current_evidence_hash != evidence_hash:
+            if not match_found:
 
                 errors.append(
                     "Evidence content has been modified "
@@ -807,9 +721,7 @@ def verify_blockchain_integrity(
 
         if block_index != expected_block_index:
 
-            errors.append(
-                "Block index sequence is invalid"
-            )
+            errors.append("Block index sequence is invalid")
 
         # ------------------------------------------
         # 2. VERIFY PREVIOUS HASH
@@ -817,10 +729,7 @@ def verify_blockchain_integrity(
 
         if previous_hash != expected_previous_hash:
 
-            errors.append(
-                "Previous hash does not match "
-                "the preceding block"
-            )
+            errors.append("Previous hash does not match " "the preceding block")
 
         # ------------------------------------------
         # 3. RECREATE EXACT ORIGINAL BLOCK
@@ -831,12 +740,8 @@ def verify_blockchain_integrity(
             "timestamp": timestamp,
             "investigation_id": investigation_id,
             "evidence_id": evidence_id,
-            "source_type": (
-                source_type or ""
-            ).upper(),
-            "title": (
-                title or "Evidence"
-            ),
+            "source_type": (source_type or "").upper(),
+            "title": (title or "Evidence"),
             "evidence_hash": evidence_hash,
             "previous_hash": previous_hash,
         }
@@ -845,20 +750,11 @@ def verify_blockchain_integrity(
         # 4. RECALCULATE BLOCK HASH
         # ------------------------------------------
 
-        recalculated_block_hash = (
-            calculate_block_hash(
-                original_block_data
-            )
-        )
+        recalculated_block_hash = calculate_block_hash(original_block_data)
 
-        if (
-            recalculated_block_hash
-            != stored_block_hash
-        ):
+        if recalculated_block_hash != stored_block_hash:
 
-            errors.append(
-                "Block hash integrity check failed"
-            )
+            errors.append("Block hash integrity check failed")
 
         # ------------------------------------------
         # BLOCK RESULT
@@ -884,15 +780,13 @@ def verify_blockchain_integrity(
         # PREPARE NEXT BLOCK CHECK
         # ------------------------------------------
 
-        expected_previous_hash = (
-            stored_block_hash
-        )
+        expected_previous_hash = stored_block_hash
 
         expected_block_index += 1
 
-    # ------------------------------------------
-    # FINAL RESULT
-    # ------------------------------------------
+        # ------------------------------------------
+        # FINAL RESULT
+        # ------------------------------------------
 
         tampered_blocks = []
 
@@ -900,53 +794,33 @@ def verify_blockchain_integrity(
 
         tampering_errors = [
             error
-            for error in block.get(
-                "errors",
-                []
-            )
-            if (
-                "modified" in error.lower()
-                or "missing" in error.lower()
-            )
+            for error in block.get("errors", [])
+            if ("modified" in error.lower() or "missing" in error.lower())
         ]
 
         if tampering_errors:
 
             tampered_blocks.append(
                 {
-                    "block_index": block.get(
-                        "block_index"
-                    ),
-                    "evidence_id": block.get(
-                        "evidence_id"
-                    ),
-                    "source_type": block.get(
-                        "source_type"
-                    ),
-                    "title": block.get(
-                        "title"
-                    ),
+                    "block_index": block.get("block_index"),
+                    "evidence_id": block.get("evidence_id"),
+                    "source_type": block.get("source_type"),
+                    "title": block.get("title"),
                     "errors": tampering_errors,
                 }
             )
 
     return {
-        "valid": (
-            len(invalid_blocks) == 0
-        ),
+        "valid": (len(invalid_blocks) == 0),
         "message": (
-            "Blockchain and evidence integrity "
-            "verified successfully"
+            "Blockchain and evidence integrity " "verified successfully"
             if len(invalid_blocks) == 0
-            else "Blockchain or evidence integrity "
-            "violation detected"
+            else "Blockchain or evidence integrity " "violation detected"
         ),
         "total_blocks": len(blocks),
         "verified_blocks": verified_blocks,
         "invalid_blocks": invalid_blocks,
-        "tampering_detected": (
-            len(tampered_blocks) > 0
-        ),
+        "tampering_detected": (len(tampered_blocks) > 0),
         "tampered_blocks": tampered_blocks,
     }
 
@@ -966,9 +840,7 @@ def verify_evidence_integrity(
     # GET BLOCKCHAIN
     # -------------------------------------------------
 
-    chain = get_investigation_chain(
-        investigation_id
-    )
+    chain = get_investigation_chain(investigation_id)
 
     evidence_block = None
 
@@ -978,10 +850,7 @@ def verify_evidence_integrity(
 
     for block in chain:
 
-        if (
-            block.get("evidence_id")
-            == evidence_id
-        ):
+        if block.get("evidence_id") == evidence_id:
 
             evidence_block = block
 
@@ -998,30 +867,18 @@ def verify_evidence_integrity(
             "valid": False,
             "tampered": None,
             "chain_valid": False,
-            "message": (
-                "Evidence not found "
-                "in blockchain."
-            ),
+            "message": ("Evidence not found " "in blockchain."),
         }
 
     # -------------------------------------------------
     # VERIFY EVIDENCE HASH
     # -------------------------------------------------
 
-    current_hash = generate_evidence_hash(
-        content
-    )
+    current_hash = generate_evidence_hash(content)
 
-    stored_hash = (
-        evidence_block.get(
-            "evidence_hash"
-        )
-    )
+    stored_hash = evidence_block.get("evidence_hash")
 
-    evidence_valid = (
-        current_hash
-        == stored_hash
-    )
+    evidence_valid = current_hash == stored_hash
 
     # -------------------------------------------------
     # VERIFY COMPLETE BLOCKCHAIN
@@ -1043,39 +900,20 @@ def verify_evidence_integrity(
 
         block_data = {
             "block_index": block_index,
-            "timestamp": block.get(
-                "timestamp"
-            ),
-            "investigation_id": block.get(
-                "investigation_id"
-            ),
-            "evidence_id": block.get(
-                "evidence_id"
-            ),
-            "source_type": block.get(
-                "source_type"
-            ),
-            "title": block.get(
-                "title"
-            ),
-            "evidence_hash": block.get(
-                "evidence_hash"
-            ),
-            "previous_hash": block.get(
-                "previous_hash"
-            ),
+            "timestamp": block.get("timestamp"),
+            "investigation_id": block.get("investigation_id"),
+            "evidence_id": block.get("evidence_id"),
+            "source_type": block.get("source_type"),
+            "title": block.get("title"),
+            "evidence_hash": block.get("evidence_hash"),
+            "previous_hash": block.get("previous_hash"),
         }
 
-        expected_hash = calculate_block_hash(
-            block_data
-        )
+        expected_hash = calculate_block_hash(block_data)
 
         # Verify previous hash connection
 
-        if (
-            block.get("previous_hash")
-            != previous_hash
-        ):
+        if block.get("previous_hash") != previous_hash:
 
             chain_valid = False
 
@@ -1083,53 +921,149 @@ def verify_evidence_integrity(
 
         # Verify block hash
 
-        if (
-            block.get("block_hash")
-            != expected_hash
-        ):
+        if block.get("block_hash") != expected_hash:
 
             chain_valid = False
 
             break
 
-        previous_hash = block.get(
-            "block_hash"
-        )
+        previous_hash = block.get("block_hash")
 
     # -------------------------------------------------
     # FINAL RESULT
     # -------------------------------------------------
 
-    final_valid = (
-        evidence_valid
-        and chain_valid
-    )
+    final_valid = evidence_valid and chain_valid
 
     return {
         "found": True,
         "valid": final_valid,
-        "tampered": (
-            not evidence_valid
-        ),
+        "tampered": (not evidence_valid),
         "chain_valid": chain_valid,
         "evidence_id": evidence_id,
         "stored_evidence_hash": stored_hash,
         "current_evidence_hash": current_hash,
-        "block_hash": evidence_block.get(
-            "block_hash"
-        ),
-        "previous_hash": evidence_block.get(
-            "previous_hash"
-        ),
+        "block_hash": evidence_block.get("block_hash"),
+        "previous_hash": evidence_block.get("previous_hash"),
         "message": (
             "Evidence integrity verified successfully."
             if final_valid
-            else (
-                "Evidence integrity check failed. "
-                "Possible tampering detected."
-            )
+            else ("Evidence integrity check failed. " "Possible tampering detected.")
         ),
     }
+
+
+INVALID_PERSON_TERMS = {
+    "unknown",
+    "person",
+    "persons",
+    "observed",
+    "suspect",
+    "accused",
+    "witness",
+    "complainant",
+    "victim",
+    "officer",
+    "police",
+    "report",
+    "database",
+    "history",
+    "records",
+    "transaction",
+    "transactions",
+    "surveillance",
+    "intelligence",
+    "financial",
+    "social media",
+    "warehouse",
+    "zone",
+    "location",
+    "area",
+    "city",
+    "district",
+    "station",
+}
+
+
+def extract_valid_people(person_names: List[str]) -> List[str]:
+    """
+    Filter a raw PERSON entity list down to plausible human names —
+    drop short fragments, generic/role words, and anything with no
+    alphabetic characters. Mirrors the person-filtering rules used
+    when building profiles in analyze_sources().
+    """
+    valid = []
+    seen = set()
+    for person_name in person_names or []:
+        key = normalize_text(person_name)
+        if not key or len(key) < 3:
+            continue
+        if key in INVALID_PERSON_TERMS:
+            continue
+        if not any(char.isalpha() for char in key):
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        valid.append(person_name)
+    return valid
+
+
+INVALID_PERSON_TERMS = {
+    "unknown",
+    "person",
+    "persons",
+    "observed",
+    "suspect",
+    "accused",
+    "witness",
+    "complainant",
+    "victim",
+    "officer",
+    "police",
+    "report",
+    "database",
+    "history",
+    "records",
+    "transaction",
+    "transactions",
+    "surveillance",
+    "intelligence",
+    "financial",
+    "social media",
+    "warehouse",
+    "zone",
+    "location",
+    "area",
+    "city",
+    "district",
+    "station",
+}
+
+
+def extract_valid_people(person_names: List[str]) -> List[str]:
+    """
+    Filter a raw PERSON entity list down to plausible human names —
+    drop short fragments, generic/role words, and anything with no
+    alphabetic characters. Mirrors the person-filtering rules used
+    when building profiles in analyze_sources().
+    """
+    valid = []
+    seen = set()
+    for person_name in person_names or []:
+        key = normalize_text(person_name)
+        if not key or len(key) < 3:
+            continue
+        if key in INVALID_PERSON_TERMS:
+            continue
+        if not any(char.isalpha() for char in key):
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        valid.append(person_name)
+    return valid
+
 
 def normalize_text(value: Optional[str]) -> str:
     return re.sub(r"\s+", " ", (value or "").strip().lower())
@@ -1526,7 +1460,13 @@ def anomaly_result(record: Dict[str, Any]) -> Dict[str, Any]:
         reasons.append("Shared identifying or contextual attribute")
 
     return {
-        "is_anomaly": len(reasons) >= 2,
+        # Previously required >=2 rule-based reasons before flagging a
+        # relationship as suspicious. That silently hid single strong
+        # signals (e.g. a relationship the ML model already scores as
+        # HIGH/SUSPICIOUS risk on confidence alone) from this panel. One
+        # concrete reason is enough for an investigator-facing flag —
+        # the reasons list itself still shows exactly what triggered it.
+        "is_anomaly": len(reasons) >= 1,
         "anomaly_score": min(
             len(reasons) / 5.0,
             1.0,
@@ -1877,38 +1817,53 @@ RELATIONSHIP_CUES = (
 )
 
 
-def clean_person_name(value: str) -> str | None:
-    value = re.sub(r"\s+", " ", str(value or "")).strip(" ,.;:-")
+def clean_person_name(
+    value: str,
+) -> str | None:
+
+    value = re.sub(
+        r"\s+",
+        " ",
+        str(value or ""),
+    ).strip(" ,.;:-")
+
     if not value:
         return None
 
     normalized = normalize_text(value)
 
+    # ==========================================
+    # KNOWN FALSE POSITIVES
+    # ==========================================
+
     if normalized in PERSON_FALSE_POSITIVE:
         return None
 
-    # A genuine person name in our investigation graph should contain at least
-    # two word-like tokens. This removes NER mistakes such as "K", "Status",
-    # "To Account", and organization/category labels.
+    # ==========================================
+    # SPLIT NAME
+    # ==========================================
+
     tokens = value.split()
 
-    if len(tokens) < 2:
+    # Genuine names should generally
+    # contain 2 to 4 words.
+
+    if len(tokens) < 2 or len(tokens) > 4:
         return None
 
-    if len(tokens) > 5:
-        return None
+    # ==========================================
+    # NUMBERS NOT ALLOWED
+    # ==========================================
 
     if any(char.isdigit() for char in value):
         return None
 
-    if any(token.lower().rstrip(":,.;") in PERSON_FALSE_POSITIVE for token in tokens):
-        return None
+    # ==========================================
+    # FALSE POSITIVE TOKENS
+    # ==========================================
 
-    if all(not re.search(r"[A-Za-zÀ-ÿ]", token) for token in tokens):
-        return None
-
-    # Don't accept strings that are obviously field/category descriptions.
-    category_words = {
+    blocked_words = {
+        # Investigation fields
         "account",
         "amount",
         "status",
@@ -1919,38 +1874,128 @@ def clean_person_name(value: str) -> str | None:
         "date",
         "time",
         "duration",
+        # Locations
         "location",
+        "sector",
+        "road",
+        "street",
+        "district",
+        "state",
+        "city",
+        "village",
+        "area",
+        "zone",
+        # Organizations
         "police",
-        "report",
+        "department",
+        "station",
+        "bank",
+        "company",
+        "corporation",
+        "agency",
+        "bureau",
         "unit",
+        # Documents
+        "report",
+        "complaint",
+        "records",
         "database",
+        "history",
+        "transaction",
+        # Documents / source headings
+        "fir",
+        "cdr",
+        "financial",
+        "surveillance",
+        "social",
+        "media",
+        "call",
+        "detail",
+        "details",
+        "statement",
+        "statements",
+        "extract",
+        "log",
+        "logs",
+        # Generic
         "profile",
+        "source",
+        "evidence",
+        "intelligence",
+        "investigation",
+        "criminal",
     }
-    if sum(token.lower().strip(":,.") in category_words for token in tokens) >= 1:
-        return None
+
+    # ==========================================
+    # REJECT BLOCKED WORDS
+    # ==========================================
+
+    for token in tokens:
+
+        cleaned_token = token.lower().strip(":,.;-")
+
+        if cleaned_token in blocked_words:
+            return None
+
+        if cleaned_token in PERSON_FALSE_POSITIVE:
+            return None
+
+    # ==========================================
+    # EACH TOKEN SHOULD LOOK LIKE A NAME
+    # ==========================================
+
+    for token in tokens:
+
+        cleaned_token = token.strip(":,.;-")
+
+        # Must contain letters
+
+        if not re.search(
+            r"[A-Za-zÀ-ÿ]",
+            cleaned_token,
+        ):
+            return None
+
+        # Reject ALL CAPS headings
+
+        if len(cleaned_token) > 2 and cleaned_token.isupper():
+            return None
+
+    # ==========================================
+    # REJECT COMMON NON-PERSON PATTERNS
+    # ==========================================
+
+    non_person_patterns = [
+        r"\bpolice\b",
+        r"\bpolice station\b",
+        r"\bsector\s*\d+\b",
+        r"\bnoida\b",
+        r"\bdelhi\b",
+        r"\bghaziabad\b",
+        r"\bwarehouse\b",
+        r"\bzone\b",
+        r"\bbank\b",
+        r"\bdepartment\b",
+        r"\bdatabase\b",
+        r"\breport\b",
+        r"\bcomplaint\b",
+        r"\bhistory\b",
+    ]
+
+    for pattern in non_person_patterns:
+
+        if re.search(
+            pattern,
+            normalized,
+            flags=re.I,
+        ):
+            return None
+
+    # ==========================================
+    # VALID PERSON
+    # ==========================================
 
     return value
-
-
-def extract_valid_people(
-    extracted_people: list[str],
-) -> list[str]:
-    result = []
-    seen = set()
-
-    for person in extracted_people or []:
-        cleaned = clean_person_name(person)
-        if not cleaned:
-            continue
-
-        key = normalize_text(cleaned)
-        if key in seen:
-            continue
-
-        seen.add(key)
-        result.append(cleaned)
-
-    return result
 
 
 def extract_people_from_source_text(
@@ -2903,15 +2948,16 @@ def health():
         "analysis_mode": "live-submitted-evidence",
     }
 
+
 @app.get("/api/investigations/{investigation_id}/blockchain/verify")
 def verify_investigation_blockchain(
     investigation_id: str,
 ):
-    result = verify_blockchain_integrity(
-        investigation_id
-    )
+    result = verify_blockchain_integrity(investigation_id)
 
     return result
+
+
 @app.get("/api/investigations")
 def list_investigations(
     authorization: Optional[str] = Header(None),
@@ -3219,57 +3265,230 @@ def save_investigation_sources(
     authorization: Optional[str] = Header(None),
 ):
     user_id = require_user(authorization)
-    require_investigation_owner(investigation_id, user_id)
+
+    require_investigation_owner(
+        investigation_id,
+        user_id,
+    )
 
     sources = normalize_source_payload(body.get("sources"))
 
-    # Persist the complete seven-source editor state in one request.
-    payload = []
+    if not sources:
 
-    for source in sources:
-
-        source_type = source.source_type.strip().upper()
-
-        # Do not create blockchain records for invalid source types
-        if not source_type:
-            continue
-
-        # ==========================================
-        # CREATE BLOCKCHAIN RECORD
-        # ==========================================
-
-        block = create_evidence_block(
-            investigation_id=investigation_id,
-            source_type=source_type,
-            title=(source.title or source_type.title()),
-            content=source.content or "",
-        )
-
-        # ==========================================
-        # PREPARE DATABASE PAYLOAD
-        # ==========================================
-
-        payload.append(
-            {
-                "investigation_id": investigation_id,
-                "source_type": source_type,
-                "title": source.title or source_type.title(),
-                "content": source.content or "",
-                "language": source.language or "en",
-                # Blockchain metadata
-                "evidence_id": block["evidence_id"],
-                "evidence_hash": block["evidence_hash"],
-                "created_at": utc_now(),
-                "updated_at": utc_now(),
-            }
-        )
-
-    if not payload:
         return {
             "investigation_id": investigation_id,
             "sources": [],
             "saved_count": 0,
         }
+
+    # ==========================================================
+    # LOAD EXISTING SOURCES
+    # ==========================================================
+
+    try:
+
+        existing_response = (
+            supabase.table("investigation_sources")
+            .select("*")
+            .eq(
+                "investigation_id",
+                investigation_id,
+            )
+            .execute()
+        )
+
+        existing_sources = existing_response.data or []
+
+    except Exception as exc:
+
+        print(
+            "Unable to load existing sources:",
+            exc,
+        )
+
+        existing_sources = []
+
+    # ==========================================================
+    # CREATE LOOKUP
+    # ==========================================================
+
+    existing_by_type = {}
+
+    for item in existing_sources:
+
+        source_type = (
+            str(
+                item.get(
+                    "source_type",
+                    "",
+                )
+            )
+            .strip()
+            .upper()
+        )
+
+        if source_type:
+
+            existing_by_type[source_type] = item
+
+    # ==========================================================
+    # PREPARE UPSERT PAYLOAD
+    # ==========================================================
+
+    payload = []
+
+    blockchain_created = []
+
+    for source in sources:
+
+        source_type = source.source_type.strip().upper()
+
+        if not source_type:
+            continue
+
+        content = source.content or ""
+
+        existing = existing_by_type.get(source_type)
+
+        # ======================================================
+        # EMPTY SOURCE
+        # ======================================================
+
+        if not content.strip():
+
+            # Do not create blockchain evidence
+            # for empty source rows.
+
+            if existing:
+
+                payload.append(
+                    {
+                        "investigation_id": investigation_id,
+                        "source_type": source_type,
+                        "title": existing.get("title") or source_type.title(),
+                        "content": "",
+                        "language": source.language or existing.get("language") or "en",
+                        "evidence_id": existing.get("evidence_id"),
+                        "evidence_hash": existing.get("evidence_hash"),
+                        "created_at": existing.get("created_at") or utc_now(),
+                        "updated_at": utc_now(),
+                    }
+                )
+
+            continue
+
+        # ======================================================
+        # CALCULATE CURRENT HASH
+        # ======================================================
+
+        current_hash = generate_evidence_hash(content)
+
+        # ======================================================
+        # NEW SOURCE
+        # ======================================================
+
+        if not existing:
+
+            block = create_evidence_block(
+                investigation_id=investigation_id,
+                source_type=source_type,
+                title=source.title or source_type.title(),
+                content=content,
+            )
+
+            blockchain_created.append(source_type)
+
+            payload.append(
+                {
+                    "investigation_id": investigation_id,
+                    "source_type": source_type,
+                    "title": source.title or source_type.title(),
+                    "content": content,
+                    "language": source.language or "en",
+                    "evidence_id": block["evidence_id"],
+                    "evidence_hash": block["evidence_hash"],
+                    "created_at": utc_now(),
+                    "updated_at": utc_now(),
+                }
+            )
+
+            continue
+
+        # ======================================================
+        # EXISTING SOURCE
+        # ======================================================
+
+        existing_hash = existing.get("evidence_hash")
+
+        # ======================================================
+        # CONTENT DID NOT CHANGE
+        # ======================================================
+
+        if existing_hash and current_hash == existing_hash:
+
+            payload.append(
+                {
+                    "investigation_id": investigation_id,
+                    "source_type": source_type,
+                    "title": existing.get("title")
+                    or source.title
+                    or source_type.title(),
+                    "content": content,
+                    "language": source.language or existing.get("language") or "en",
+                    # IMPORTANT:
+                    # KEEP SAME BLOCKCHAIN EVIDENCE
+                    "evidence_id": existing.get("evidence_id"),
+                    "evidence_hash": existing_hash,
+                    "created_at": existing.get("created_at") or utc_now(),
+                    "updated_at": utc_now(),
+                }
+            )
+
+            continue
+
+        # ======================================================
+        # CONTENT CHANGED
+        # ======================================================
+
+        block = create_evidence_block(
+            investigation_id=investigation_id,
+            source_type=source_type,
+            title=existing.get("title") or source.title or source_type.title(),
+            content=content,
+        )
+
+        blockchain_created.append(source_type)
+
+        payload.append(
+            {
+                "investigation_id": investigation_id,
+                "source_type": source_type,
+                "title": existing.get("title") or source.title or source_type.title(),
+                "content": content,
+                "language": source.language or existing.get("language") or "en",
+                "evidence_id": block["evidence_id"],
+                "evidence_hash": block["evidence_hash"],
+                "created_at": existing.get("created_at") or utc_now(),
+                "updated_at": utc_now(),
+            }
+        )
+
+    # ==========================================================
+    # NOTHING TO SAVE
+    # ==========================================================
+
+    if not payload:
+
+        return {
+            "investigation_id": investigation_id,
+            "sources": [],
+            "saved_count": 0,
+            "blockchain_created": [],
+        }
+
+    # ==========================================================
+    # SAVE SOURCES
+    # ==========================================================
 
     try:
 
@@ -3284,18 +3503,53 @@ def save_investigation_sources(
 
     except Exception as exc:
 
-        print(f"Source bulk persistence failed: {exc}")
+        print(
+            "Source persistence failed:",
+            exc,
+        )
 
         raise HTTPException(
             status_code=500,
-            detail=(f"Unable to save investigation sources: {exc}"),
+            detail=("Unable to save " "investigation sources"),
         )
+
+    # ==========================================================
+    # RETURN
+    # ==========================================================
 
     return {
         "investigation_id": investigation_id,
         "sources": result.data or [],
         "saved_count": len(result.data or []),
+        "blockchain_created": blockchain_created,
     }
+
+
+_ALLCAPS_RUN_RE = re.compile(r"\b[A-Z]{2,}(?:\s+[A-Z]{2,}){0,3}\b")
+
+
+def normalize_case_for_ner(text: str) -> str:
+    """spaCy's NER leans heavily on capitalization to spot proper nouns.
+    Case-file text often renders names in ALL CAPS (e.g. "ARJUN MALHOTRA")
+    inside otherwise normal-case sentences, and spaCy typically fails to
+    tag those as PERSON. Title-case any multi-word ALL-CAPS run so NER
+    sees an ordinary proper noun, while leaving short single-word
+    acronyms (FIR, CDR, PDF...) alone.
+    """
+
+    def _fix(match):
+        word = match.group(0)
+        if len(word.split()) == 1 and len(word) <= 4:
+            return word
+        return word.title()
+
+    return _ALLCAPS_RUN_RE.sub(_fix, text)
+
+
+def extract_entities(text: str):
+    from .nlp import extract_entities as _extract_entities
+
+    return _extract_entities(normalize_case_for_ner(text))
 
 
 def normalize_source_payload(raw_sources: Any) -> List[SourceInput]:
@@ -3394,46 +3648,121 @@ def analyze_sources(
     context_documents: List[Dict[str, Any]] = []
     persisted_documents: List[Dict[str, Any]] = []
     entity_counts: Counter[str] = Counter()
-    raw_person_names: Dict[str, str] = {}
+    raw_person_names = {}
 
     # ------------------------------------------------------------------
     # IMPORTANT: analysis is performed exclusively from this request's
-    # submitted source corpus. Training CSVs and pre-existing unrelated
-    # investigation records are not read for graph construction.
+    # submitted source corpus.
     # ------------------------------------------------------------------
+
+    invalid_person_terms = {
+        "unknown",
+        "person",
+        "persons",
+        "observed",
+        "suspect",
+        "accused",
+        "witness",
+        "complainant",
+        "victim",
+        "officer",
+        "police",
+        "report",
+        "database",
+        "history",
+        "records",
+        "transaction",
+        "transactions",
+        "surveillance",
+        "intelligence",
+        "financial",
+        "social media",
+        "warehouse",
+        "zone",
+        "location",
+        "area",
+        "city",
+        "district",
+        "station",
+    }
+
     for index, source in enumerate(sources):
+
         content = source.content.strip()
+
         if not content:
             continue
 
+        # Extract entities from the current source
         entities = extract_entities(content)
 
-        # PERSON from spaCy can occasionally contain a location, organization,
-        # section heading, or another non-person phrase. A live investigation
-        # graph must contain PERSON nodes only. Filter PERSON candidates against
-        # the other entity classes before creating person profiles.
+        # Extract locations and organizations so they can be
+        # removed from PERSON candidates
         gpe_values = {normalize_text(value) for value in entities.get("GPE", [])}
+
+        location_values = {normalize_text(value) for value in entities.get("LOC", [])}
+
         org_values = {normalize_text(value) for value in entities.get("ORG", [])}
-        for person_name in extract_valid_people(entities.get("PERSON", [])):
-            key = normalize_text(person_name)
+
+        # ----------------------------------------------------------
+        # FILTER VALID PERSONS
+        # ----------------------------------------------------------
+
+        for person_name in entities.get("PERSON", []):
+
+            # Route through the shared clean_person_name() validator —
+            # it already rejects digits, field-label junk ("phone",
+            # "vehicle", "extract", "reference", ...), ALL-CAPS headings,
+            # and known non-person patterns ("noida", "database", "report",
+            # etc). The lighter-weight checks below (length, the local
+            # invalid_person_terms set, and the location/org overlap
+            # rejection) still run on top of it.
+            cleaned_name = clean_person_name(person_name)
+
+            if cleaned_name is None:
+                continue
+
+            key = normalize_text(cleaned_name)
+
             if not key:
                 continue
 
-            # Reject exact matches and names containing an extracted location
-            # or organization phrase, e.g. "Noida Sector 18".
+            if len(key) < 3:
+                continue
+
+            if key in invalid_person_terms:
+                continue
+
+            # Reject locations and organizations incorrectly
+            # detected as persons
             if any(
                 entity
-                and (key == entity or re.search(rf"\b{re.escape(entity)}\b", key))
-                for entity in (gpe_values | org_values)
+                and (
+                    key == entity
+                    or re.search(
+                        rf"\b{re.escape(entity)}\b",
+                        key,
+                    )
+                )
+                for entity in (gpe_values | location_values | org_values)
             ):
                 continue
 
-            raw_person_names[key] = person_name
+            raw_person_names[key] = cleaned_name
+
+        # ----------------------------------------------------------
+        # COUNT ALL ENTITY TYPES
+        # ----------------------------------------------------------
 
         for label, values in entities.items():
             entity_counts[label] += len(values)
 
+        # ----------------------------------------------------------
+        # CREATE DOCUMENT RECORD
+        # ----------------------------------------------------------
+
         title = source.title or f"{source.source_type.title()} {index + 1}"
+
         content_hash = sha256_json(
             {
                 "content": content,
@@ -3441,6 +3770,7 @@ def analyze_sources(
                 "title": title,
             }
         )
+
         row = {
             "investigation_id": investigation_id,
             "source_type": source.source_type.upper(),
@@ -3450,7 +3780,9 @@ def analyze_sources(
             "content_hash": content_hash,
             "extracted_entities": entities,
         }
+
         inserted = supabase.table("documents").insert(row).execute()
+
         document = inserted.data[0] if inserted.data else None
 
         context_documents.append(
@@ -3460,14 +3792,15 @@ def analyze_sources(
                 "content": content,
                 "language": source.language,
                 "entities": entities,
-                "document_id": document["id"] if document else None,
+                "document_id": (document["id"] if document else None),
             }
         )
-        persisted_documents.append({"document": document, "entities": entities})
 
-    if not context_documents:
-        raise HTTPException(
-            400, "At least one non-empty intelligence source is required"
+        persisted_documents.append(
+            {
+                "document": document,
+                "entities": entities,
+            }
         )
 
     # Build all live person profiles from this submitted corpus only.
