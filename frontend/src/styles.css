@@ -1,5 +1,10 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&family=Newsreader:opsz,wght@6..72,500;6..72,600&display=swap");
+
 /* =========================================================
    NYAYANET — DESIGN TOKENS
+   Theme: warm graphite + muted brass.
+   To re-skin the app, change the colour tokens below.
+   (Graph colours live in GRAPH_COLORS at the top of App.jsx.)
    ========================================================= */
 
 :root {
@@ -7,6 +12,8 @@
   --font-sans:
     "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     sans-serif;
+  --font-display:
+    "Newsreader", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
   --font-mono:
     "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 
@@ -20,56 +27,68 @@
   --fs-2xl: 28px;
   --fs-3xl: 34px;
 
-  /* Surfaces */
-  --c-bg: #0a0d13;
-  --c-bg-elevated: #0d111a;
-  --c-surface: #131822;
-  --c-surface-2: #1a2130;
-  --c-surface-sunken: #0c1017;
+  /* Surfaces — graphite, lifted off pure black */
+  --c-bg: #131417;
+  --c-bg-elevated: #17181c;
+  --c-bg-glass: rgba(19, 20, 23, 0.92);
+  --c-surface: #1e1f24;
+  --c-surface-2: #282930;
+  --c-surface-sunken: #111215;
 
   /* Borders */
-  --c-border: #232a3a;
-  --c-border-strong: #333d52;
+  --c-border: #2c2d34;
+  --c-border-strong: #3d3e47;
   --c-border-hairline: rgba(255, 255, 255, 0.06);
 
-  /* Text */
-  --c-text: #edf1f7;
-  --c-text-secondary: #9ba7c0;
-  --c-text-tertiary: #6b7690;
-  --c-text-quiet: #4c5670;
+  /* Text — warm ivory instead of cold white */
+  --c-text: #ece9e2;
+  --c-text-secondary: #b0aea6;
+  --c-text-tertiary: #928f86;
+  --c-text-quiet: #6a6961;
 
-  /* Accent */
-  --c-accent: #3d7ff3;
-  --c-accent-hover: #5a93f5;
-  --c-accent-active: #2f6adc;
-  --c-accent-soft: rgba(61, 127, 243, 0.12);
-  --c-accent-border: rgba(61, 127, 243, 0.4);
-  --c-accent-text: #8ab4f8;
+  /* Accent — muted brass */
+  --c-accent: #c4a46a;
+  --c-accent-hover: #d2b57d;
+  --c-accent-active: #ae8f58;
+  --c-accent-soft: rgba(196, 164, 106, 0.11);
+  --c-accent-border: rgba(196, 164, 106, 0.38);
+  --c-accent-text: #d8bf8f;
+  --c-on-accent: #1c1608;
 
-  /* Status */
-  --c-success: #34c08b;
-  --c-success-soft: rgba(52, 192, 139, 0.13);
-  --c-success-border: rgba(52, 192, 139, 0.32);
-  --c-warning: #e2984e;
-  --c-warning-soft: rgba(226, 152, 78, 0.13);
-  --c-warning-border: rgba(226, 152, 78, 0.32);
-  --c-danger: #ea5c66;
-  --c-danger-soft: rgba(234, 92, 102, 0.13);
-  --c-danger-border: rgba(234, 92, 102, 0.36);
+  /* Status — kept clearly apart from the accent */
+  --c-success: #4fb886;
+  --c-success-soft: rgba(79, 184, 134, 0.12);
+  --c-success-border: rgba(79, 184, 134, 0.3);
+  --c-warning: #de8650;
+  --c-warning-soft: rgba(222, 134, 80, 0.12);
+  --c-warning-border: rgba(222, 134, 80, 0.32);
+  --c-danger: #e5636e;
+  --c-danger-soft: rgba(229, 99, 110, 0.12);
+  --c-danger-border: rgba(229, 99, 110, 0.36);
+  --c-danger-glow: rgba(229, 99, 110, 0.55);
 
-  /* Radius */
-  --r-sm: 8px;
-  --r-md: 12px;
-  --r-lg: 16px;
-  --r-xl: 20px;
+  /* Radius — slightly tighter for a more restrained feel */
+  --r-sm: 6px;
+  --r-md: 9px;
+  --r-lg: 12px;
+  --r-xl: 16px;
   --r-full: 999px;
 
   /* Shadow */
   --shadow-sm:
     0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 0 rgba(255, 255, 255, 0.02) inset;
   --shadow-md: 0 14px 34px rgba(0, 0, 0, 0.32);
-  --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.48);
-  --shadow-focus: 0 0 0 3px var(--c-accent-soft);
+  --shadow-lg: 0 30px 80px rgba(0, 0, 0, 0.5);
+  --shadow-focus:
+    0 0 0 3px var(--c-accent-soft), 0 0 0 1px var(--c-accent-border);
+
+  /* Glows */
+  --glow-accent:
+    0 0 0 1px var(--c-accent-border), 0 6px 22px rgba(196, 164, 106, 0.26);
+  --glow-accent-soft: 0 0 18px rgba(196, 164, 106, 0.14);
+  --glow-success: 0 0 22px rgba(79, 184, 134, 0.16);
+  --glow-warning: 0 0 22px rgba(222, 134, 80, 0.14);
+  --glow-danger: 0 0 24px rgba(229, 99, 110, 0.18);
 
   --ease: cubic-bezier(0.2, 0.65, 0.3, 1);
 
@@ -103,9 +122,15 @@ h1,
 h2,
 h3 {
   font-family: var(--font-sans);
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--c-text);
+}
+h1,
+h2 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.005em;
 }
 button,
 input,
@@ -164,7 +189,13 @@ a:focus-visible {
   display: grid;
   place-items: center;
   padding: 28px;
-  background: radial-gradient(circle at 50% 0%, #101a2b 0, var(--c-bg) 55%);
+  background:
+    radial-gradient(
+      ellipse at 50% -8%,
+      rgba(196, 164, 106, 0.08),
+      transparent 55%
+    ),
+    var(--c-bg);
 }
 
 .auth-card,
@@ -189,10 +220,11 @@ a:focus-visible {
   display: grid;
   place-items: center;
   background: var(--c-accent);
-  color: #fff;
-  font-weight: 800;
-  font-size: 20px;
-  box-shadow: 0 8px 20px rgba(61, 127, 243, 0.3);
+  color: var(--c-on-accent);
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 24px;
+  box-shadow: 0 6px 18px rgba(196, 164, 106, 0.18);
 }
 .brand-mark.large {
   width: 58px;
@@ -202,8 +234,9 @@ a:focus-visible {
   margin-bottom: 20px;
 }
 .brand-title {
-  font-size: var(--fs-lg);
-  font-weight: 800;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
   letter-spacing: -0.01em;
 }
 .brand-subtitle {
@@ -291,7 +324,7 @@ select {
 .primary-button {
   border: 1px solid var(--c-accent-active);
   background: var(--c-accent);
-  color: #fff;
+  color: var(--c-on-accent);
   font-weight: 700;
   font-size: var(--fs-sm);
   border-radius: var(--r-md);
@@ -315,7 +348,7 @@ select {
 .small-primary {
   border: 1px solid var(--c-accent-active);
   background: var(--c-accent);
-  color: #fff;
+  color: var(--c-on-accent);
   font-weight: 700;
   border-radius: var(--r-sm);
   padding: 8px 12px;
@@ -551,7 +584,7 @@ select {
 }
 .status-badge.active::before {
   background: var(--c-success);
-  box-shadow: 0 0 8px rgba(52, 192, 139, 0.55);
+  box-shadow: 0 0 8px rgba(79, 184, 134, 0.5);
 }
 .status-badge.closed::before {
   background: var(--c-text-quiet);
@@ -616,7 +649,8 @@ select {
    ========================================================= */
 
 .main-content {
-  padding: 28px 32px 48px;
+  --main-pad: 32px;
+  padding: 28px var(--main-pad) 48px;
   max-width: 1900px;
   width: 100%;
   margin: 0 auto;
@@ -660,7 +694,7 @@ select {
   height: 7px;
   border-radius: 50%;
   background: var(--c-success);
-  box-shadow: 0 0 10px rgba(52, 192, 139, 0.7);
+  box-shadow: 0 0 10px rgba(79, 184, 134, 0.65);
 }
 
 .panel {
@@ -725,6 +759,8 @@ select {
 }
 .stat-card strong {
   display: block;
+  font-family: var(--font-display);
+  font-variant-numeric: lining-nums tabular-nums;
   font-size: var(--fs-2xl);
   margin: 8px 0 2px;
   font-weight: 700;
@@ -800,6 +836,7 @@ select {
 .analysis-card,
 .methodology-panel,
 .blockchain-panel,
+.utility-panel,
 .investigator-assistance-panel {
   padding: 22px;
   margin-bottom: 18px;
@@ -1185,10 +1222,14 @@ select {
 }
 .legend-dot.selected {
   background: var(--c-success);
-  box-shadow: 0 0 9px rgba(52, 192, 139, 0.55);
+  box-shadow: 0 0 9px rgba(79, 184, 134, 0.5);
 }
 .legend-dot.connected {
   background: var(--c-accent);
+}
+.legend .legend-influential,
+.legend .legend-strongest {
+  color: var(--c-danger);
 }
 .network-topbar {
   display: grid;
@@ -1423,7 +1464,7 @@ select {
   background:
     radial-gradient(
       circle at 50% 45%,
-      rgba(61, 127, 243, 0.08),
+      rgba(196, 164, 106, 0.06),
       transparent 44%
     ),
     var(--c-surface-sunken);
@@ -1435,7 +1476,7 @@ select {
   position: absolute;
   left: 12px;
   bottom: 12px;
-  background: rgba(10, 13, 19, 0.88);
+  background: rgba(17, 18, 21, 0.88);
   border: 1px solid var(--c-border);
   color: var(--c-text-tertiary);
   font-size: 10px;
@@ -1669,7 +1710,7 @@ select {
   background: var(--c-warning-soft);
   border-top: 1px solid var(--c-border);
   padding: 13px 16px;
-  color: #f0bd8c;
+  color: #f0b892;
   font-size: 10px;
   line-height: 1.55;
   border-radius: 0 0 var(--r-lg) var(--r-lg);
@@ -1869,6 +1910,10 @@ select {
 }
 .strongest-relationship-row .relationship-bar-fill {
   background: var(--c-danger);
+  box-shadow: 0 0 12px var(--c-danger-glow);
+}
+.strongest-relationship-row .relationship-bar-label strong {
+  color: var(--c-danger);
 }
 .recommendation-row {
   display: flex;
@@ -1931,6 +1976,8 @@ select {
   margin-bottom: 6px;
 }
 .summary-stat strong {
+  font-family: var(--font-display);
+  font-variant-numeric: lining-nums tabular-nums;
   font-size: var(--fs-2xl);
   line-height: 1;
   font-weight: 700;
@@ -1947,7 +1994,7 @@ select {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(4, 6, 10, 0.78);
+  background: rgba(8, 8, 10, 0.8);
   backdrop-filter: blur(6px);
   z-index: 1000;
   padding: 20px;
@@ -2069,7 +2116,7 @@ select {
   z-index: 99999;
   display: grid;
   place-items: center;
-  background: rgba(4, 6, 10, 0.78);
+  background: rgba(8, 8, 10, 0.8);
   backdrop-filter: blur(7px);
   -webkit-backdrop-filter: blur(7px);
 }
@@ -2104,6 +2151,391 @@ select {
   margin-top: 8px;
   font-size: var(--fs-xs);
   color: var(--c-text-tertiary);
+}
+
+/* =========================================================
+   WORKSPACE TABS
+   ========================================================= */
+
+.tabs {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  margin: 0 calc(var(--main-pad) * -1) 22px;
+  padding: 0 var(--main-pad);
+  background: var(--c-bg-glass);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid var(--c-border);
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar {
+  display: none;
+}
+.tab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--c-text-tertiary);
+  padding: 15px 14px 14px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.tab::after {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--c-accent);
+  transform: scaleX(0);
+  transition: transform 0.2s var(--ease);
+}
+.tab:hover {
+  color: var(--c-text-secondary);
+}
+.tab[aria-selected="true"] {
+  color: var(--c-text);
+}
+.tab[aria-selected="true"]::after {
+  transform: scaleX(1);
+}
+.tab:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--c-accent-border);
+  border-radius: var(--r-sm);
+}
+
+.tab-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--r-full);
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  color: var(--c-text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+.tab-badge.warn {
+  color: var(--c-warning);
+  background: var(--c-warning-soft);
+  border-color: var(--c-warning-border);
+}
+.tab-badge.ok {
+  color: var(--c-success);
+  background: var(--c-success-soft);
+  border-color: var(--c-success-border);
+}
+.tab-badge.danger {
+  color: var(--c-danger);
+  background: var(--c-danger-soft);
+  border-color: var(--c-danger-border);
+}
+
+.tab-panel {
+  animation: nn-tab-in 0.18s var(--ease);
+}
+@keyframes nn-tab-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.tab-panel > .investigator-assistance-panel,
+.tab-panel > .investigation-summary-panel {
+  margin-top: 0;
+}
+.tab-narrow {
+  max-width: 960px;
+}
+
+.tab-empty {
+  padding: 64px 24px;
+  text-align: center;
+}
+.tab-empty h2 {
+  margin: 0 0 8px;
+  font-size: var(--fs-xl);
+}
+.tab-empty p {
+  margin: 0 auto 22px;
+  max-width: 460px;
+  color: var(--c-text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.65;
+}
+
+/* Relationship hover tooltip on the graph (mirrors .node-tooltip) */
+.edge-tooltip {
+  max-width: 290px;
+  padding: 12px 13px;
+  background: var(--c-surface-2);
+  color: var(--c-text);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  font-family: var(--font-sans);
+}
+.edge-tooltip strong,
+.edge-tooltip .edge-confidence {
+  display: block;
+}
+.edge-tooltip strong {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+}
+.edge-tooltip .edge-confidence {
+  color: var(--c-accent-text);
+  font-size: 10px;
+  margin-top: 3px;
+}
+.edge-tooltip p {
+  margin: 8px 0 0;
+  color: var(--c-text-secondary);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.edge-evidence {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+.edge-evidence span {
+  padding: 3px 7px;
+  border-radius: var(--r-sm);
+  background: var(--c-surface-sunken);
+  color: var(--c-text-secondary);
+  font-size: 10px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab-panel,
+  .authorized-pill span {
+    animation: none;
+  }
+  .primary-button:hover:not(:disabled),
+  .search-result-row:hover .result-arrow {
+    transform: none;
+  }
+  .tab::after,
+  .relationship-bar-fill {
+    transition: none;
+  }
+}
+
+/* =========================================================
+   INTERACTION & GLOW
+   Hover effects are wrapped in (hover: hover) so touch screens
+   never get "stuck" hover states.
+   ========================================================= */
+
+/* Surfaces that react share one transition */
+.source-card,
+.modal-source-card,
+.stat-card,
+.summary-stat,
+.assist-card,
+.assist-subpanel,
+.rank-row,
+.pattern-row,
+.entity-chip,
+.guardrail-grid > div,
+.relationship-metrics > div,
+.investigation-item,
+.search-result-row,
+.blockchain-status,
+.tampered-item {
+  transition:
+    border-color 0.18s var(--ease),
+    background-color 0.18s var(--ease),
+    box-shadow 0.22s var(--ease);
+}
+
+/* Focus: inputs get a warm halo, not just a ring */
+input:focus,
+textarea:focus,
+select:focus {
+  box-shadow:
+    var(--shadow-focus),
+    0 0 22px rgba(196, 164, 106, 0.1);
+}
+.search-input-wrap:focus-within {
+  box-shadow:
+    var(--shadow-focus),
+    0 0 22px rgba(196, 164, 106, 0.1);
+}
+.source-card:focus-within,
+.modal-source-card:focus-within {
+  border-color: var(--c-accent-border);
+  box-shadow: var(--glow-accent-soft);
+}
+
+/* Always-on glow: things that signal state */
+.empty-icon,
+.placeholder-icon {
+  box-shadow: 0 0 32px var(--c-accent-soft);
+}
+.restricted-icon {
+  box-shadow: var(--glow-warning);
+}
+.blockchain-status.verified {
+  box-shadow: var(--glow-success);
+}
+.blockchain-status.invalid,
+.tampered-item {
+  box-shadow: var(--glow-danger);
+}
+.relationship-bar-fill {
+  box-shadow: 0 0 10px rgba(196, 164, 106, 0.35);
+}
+.rank-score {
+  text-shadow: 0 0 14px rgba(79, 184, 134, 0.4);
+}
+.create-modal {
+  box-shadow:
+    var(--shadow-lg),
+    0 0 0 1px var(--c-accent-soft);
+}
+.global-busy-card {
+  box-shadow: var(--shadow-lg), var(--glow-accent-soft);
+}
+.spinner,
+.busy-spinner {
+  filter: drop-shadow(0 0 6px rgba(196, 164, 106, 0.5));
+}
+
+/* Active tab: glowing underline; badges that need attention glow faintly */
+.tab::after {
+  transition:
+    transform 0.2s var(--ease),
+    opacity 0.2s var(--ease);
+}
+.tab[aria-selected="true"]::after {
+  box-shadow: 0 0 12px 1px rgba(196, 164, 106, 0.5);
+}
+.tab-badge.warn {
+  box-shadow: 0 0 10px rgba(222, 134, 80, 0.25);
+}
+.tab-badge.danger {
+  box-shadow: 0 0 10px rgba(229, 99, 110, 0.3);
+}
+
+/* The one ambient animation: a slow pulse on the "authorized" indicator */
+.authorized-pill span {
+  animation: nn-live 2.6s ease-out infinite;
+}
+@keyframes nn-live {
+  0% {
+    box-shadow: 0 0 0 0 rgba(79, 184, 134, 0.55);
+  }
+  70%,
+  100% {
+    box-shadow: 0 0 0 8px rgba(79, 184, 134, 0);
+  }
+}
+
+/* The active case in the sidebar */
+.investigation-item.active {
+  box-shadow:
+    inset 2px 0 0 var(--c-accent),
+    var(--glow-accent-soft);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--c-accent-border);
+  background-clip: content-box;
+}
+
+@media (hover: hover) {
+  /* Buttons */
+  .primary-button:hover:not(:disabled) {
+    box-shadow: var(--glow-accent);
+    transform: translateY(-1px);
+  }
+  .primary-button:active:not(:disabled) {
+    box-shadow: var(--shadow-sm);
+    transform: translateY(1px);
+  }
+  .small-primary:hover:not(:disabled) {
+    box-shadow: 0 0 16px rgba(196, 164, 106, 0.32);
+  }
+  .ghost-button:hover:not(:disabled) {
+    box-shadow: var(--glow-accent-soft);
+  }
+  .logout-button:hover {
+    background: var(--c-danger-soft);
+    box-shadow: var(--glow-danger);
+  }
+  .link-button:hover {
+    text-shadow: 0 0 14px rgba(196, 164, 106, 0.55);
+  }
+
+  /* Tabs: hovering previews the underline */
+  .tab:not([aria-selected="true"]):hover::after {
+    transform: scaleX(0.35);
+    opacity: 0.6;
+  }
+
+  /* Sidebar and lists */
+  .investigation-item:hover:not(.active) {
+    box-shadow: inset 2px 0 0 var(--c-accent-border);
+  }
+  .search-result-row:hover {
+    box-shadow: inset 2px 0 0 var(--c-accent);
+  }
+  .result-arrow {
+    transition:
+      transform 0.18s var(--ease),
+      color 0.18s var(--ease);
+  }
+  .search-result-row:hover .result-arrow {
+    color: var(--c-accent-text);
+    transform: translateX(3px);
+  }
+
+  /* Cards: a quiet lift in border, never movement */
+  .source-card:hover,
+  .modal-source-card:hover,
+  .stat-card:not(.alert-stat):hover,
+  .summary-stat:not(.summary-alert):hover,
+  .assist-card:hover,
+  .assist-subpanel:hover,
+  .entity-chip:hover,
+  .guardrail-grid > div:hover,
+  .relationship-metrics > div:hover {
+    border-color: var(--c-border-strong);
+  }
+  .rank-row:hover,
+  .pattern-row:hover {
+    border-color: var(--c-accent-border);
+    background: var(--c-surface-2);
+    box-shadow: var(--glow-accent-soft);
+  }
+  .rank-row:hover .rank-number {
+    box-shadow: 0 0 14px rgba(196, 164, 106, 0.35);
+  }
+  .alert-stat:hover {
+    box-shadow: var(--glow-danger);
+  }
+  .summary-alert:hover {
+    box-shadow: var(--glow-warning);
+  }
 }
 
 /* =========================================================
@@ -2192,7 +2624,7 @@ select {
 
 @media (max-width: 600px) {
   .main-content {
-    padding: 16px;
+    --main-pad: 16px;
   }
   .stats-grid,
   .summary-grid {

@@ -23,6 +23,35 @@ const EMPTY_SOURCE = SOURCE_TYPES.reduce((acc, source) => {
   return acc;
 }, {});
 
+// Canvas can't read CSS variables, so the graph palette lives here. Keep it in
+// step with the tokens at the top of styles.css (brass = --c-accent, etc.).
+const GRAPH_COLORS = {
+  background: "#111215",
+  node: { fill: "#2b2820", stroke: "#c4a46a", hover: "#ecd9b0", halo: "rgba(196, 164, 106, 0.14)", glow: "rgba(196, 164, 106, 0.6)" },
+  center: { fill: "#12302a", stroke: "#4fb886", halo: "rgba(79, 184, 134, 0.16)", glow: "rgba(79, 184, 134, 0.75)" },
+  influential: { fill: "#40151a", stroke: "#e5636e", halo: "rgba(229, 99, 110, 0.20)", star: "#ef8790", glow: "rgba(229, 99, 110, 0.8)" },
+  label: { text: "#ece9e2", initials: "#f4f0e6", pill: "rgba(17, 18, 21, 0.9)" },
+  link: { base: "rgba(196, 164, 106, 0.45)", hover: "#e2cc9c", strongest: "#e5636e" },
+  badge: {
+    fill: "rgba(17, 18, 21, 0.9)", stroke: "rgba(196, 164, 106, 0.4)", text: "#eee5d0",
+    hoverFill: "rgba(43, 40, 32, 0.98)", hoverStroke: "rgba(226, 204, 156, 0.85)",
+    strongestFill: "rgba(64, 21, 26, 0.98)", strongestStroke: "rgba(229, 99, 110, 0.95)", strongestText: "#f5b5ba",
+  },
+};
+
+// One tab per feature. Order follows the investigator's workflow.
+const WORKSPACE_TABS = [
+  { key: "overview", label: "Overview" },
+  { key: "sources", label: "Sources" },
+  { key: "network", label: "Network" },
+  { key: "analytics", label: "Analytics" },
+  { key: "insights", label: "Insights" },
+  { key: "fir", label: "FIR Intelligence" },
+  { key: "tips", label: "Tip Analysis" },
+  { key: "integrity", label: "Evidence Integrity" },
+  { key: "guardrails", label: "Guardrails" },
+];
+
 function initials(name = "Unknown") {
   return name
     .split(/\s+/)
@@ -154,6 +183,20 @@ async function extractPdfText(file) {
   return extracted;
 }
 
+function TabEmpty({ title, children, actionLabel, onAction }) {
+  return (
+    <section className="panel tab-empty">
+      <h2>{title}</h2>
+      <p>{children}</p>
+      {actionLabel && (
+        <button type="button" className="primary-button compact" onClick={onAction}>
+          {actionLabel}
+        </button>
+      )}
+    </section>
+  );
+}
+
 export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
@@ -170,6 +213,7 @@ export default function App() {
   const [investigations, setInvestigations] = useState([]);
   const [selected, setSelected] = useState(null);
   const [investigationFilter, setInvestigationFilter] = useState("active");
+  const [activeTab, setActiveTab] = useState("overview");
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTitle, setNewTitle] = useState("");
@@ -510,6 +554,7 @@ export default function App() {
     resetCaseState();
 
     setSelected(created); // now safe — workspace fetch will see the saved sources
+    setActiveTab("overview");
 
     setAnalysis(analysisResult);
     setAnalysisGraph(analysisResult?.graph || { nodes: [], links: [] });
@@ -1183,7 +1228,7 @@ let firLanguage = "en";
     center?.strength?.(0.08);
 
     graphApi.d3ReheatSimulation?.();
-  }, [graph.nodes.length, graph.links.length]);
+  }, [graph.nodes.length, graph.links.length, activeTab]);
 
   function closeInvestigation() {
     if (!selected) return;
@@ -1235,6 +1280,40 @@ let firLanguage = "en";
   const entityTotal = analysis
     ? Object.values(analysis.entity_counts || {}).reduce((sum, value) => sum + Number(value || 0), 0)
     : 0;
+
+  const filledSourceCount = SOURCE_TYPES.filter((source) => sourceDrafts[source.key]?.trim()).length;
+  const suspiciousCount = analysis?.suspicious_patterns?.length || 0;
+
+  // Small status chips on the tabs that have something worth flagging.
+  const tabBadges = {
+    sources: analysisStale
+      ? { text: "!", tone: "warn", label: "Evidence changed since the last analysis" }
+      : filledSourceCount
+        ? { text: `${filledSourceCount}/${SOURCE_TYPES.length}`, tone: "neutral", label: `${filledSourceCount} of ${SOURCE_TYPES.length} sources added` }
+        : null,
+    analytics: suspiciousCount
+      ? { text: String(suspiciousCount), tone: "warn", label: `${suspiciousCount} suspicious signal(s)` }
+      : null,
+    integrity: blockchainStatus
+      ? blockchainStatus.valid
+        ? { text: "✓", tone: "ok", label: "Blockchain verified" }
+        : { text: "!", tone: "danger", label: "Integrity violation detected" }
+      : null,
+  };
+
+  function handleTabKeyDown(event) {
+    const keys = WORKSPACE_TABS.map((tab) => tab.key);
+    const index = keys.indexOf(activeTab);
+    let next = null;
+    if (event.key === "ArrowRight") next = keys[(index + 1) % keys.length];
+    else if (event.key === "ArrowLeft") next = keys[(index - 1 + keys.length) % keys.length];
+    else if (event.key === "Home") next = keys[0];
+    else if (event.key === "End") next = keys[keys.length - 1];
+    if (!next) return;
+    event.preventDefault();
+    setActiveTab(next);
+    document.getElementById(`tab-${next}`)?.focus();
+  }
 
 
   // Investigator Assistance: derive visual and analytical insights from the
@@ -1560,327 +1639,6 @@ let firLanguage = "en";
               </div>
             </section>
 
-            <section className="stats-grid">
-              <div className="stat-card"><span>SOURCES PROCESSED</span><strong>{analysis?.sources?.length || 0}</strong><small>documents in this analysis</small></div>
-              <div className="stat-card"><span>ENTITIES EXTRACTED</span><strong>{entityTotal}</strong><small>people, places, vehicles & more</small></div>
-              <div className="stat-card"><span>CANDIDATE LINKS</span><strong>{analysis?.candidate_relationships?.length || 0}</strong><small>model-scored analytical leads</small></div>
-              <div className="stat-card alert-stat"><span>SUSPICIOUS PATTERNS</span><strong>{analysis?.suspicious_patterns?.length || 0}</strong><small>requires investigator review</small></div>
-            </section>
-
-            {/* =====================================================
-    BLOCKCHAIN INTEGRITY DASHBOARD
-===================================================== */}
-
-<section className="panel blockchain-panel">
-
-  <div className="section-header">
-    <div>
-      <div className="eyebrow">
-        EVIDENCE SECURITY
-      </div>
-
-      <h2>
-        🔐 Evidence Integrity & Blockchain
-      </h2>
-
-      <p>
-        Verify investigation evidence and blockchain
-        records for unauthorized modifications.
-      </p>
-    </div>
-
-    <button
-      type="button"
-      className="primary-button"
-      onClick={verifyBlockchainIntegrity}
-      disabled={
-        blockchainLoading || !selected?.id
-      }
-    >
-      {blockchainLoading
-        ? "Verifying..."
-        : "🔄 Verify Integrity"}
-    </button>
-  </div>
-
-
-  {/* ERROR */}
-
-  {blockchainError && (
-
-    <div className="error-box main-error">
-
-      <span>
-        ❌ {blockchainError}
-      </span>
-
-    </div>
-
-  )}
-
-
-  {/* DEFAULT STATE */}
-
-  {!blockchainStatus &&
-    !blockchainError &&
-    !blockchainLoading && (
-
-      <div className="empty-state">
-
-        <div className="empty-icon">
-          🔐
-        </div>
-
-        <strong>
-          Blockchain verification not run
-        </strong>
-
-        <p>
-          Verify the evidence chain to ensure
-          investigation data has not been modified.
-        </p>
-
-      </div>
-
-    )}
-
-
-  {/* LOADING */}
-
-  {blockchainLoading && (
-
-    <div className="empty-state">
-
-      <div className="empty-icon">
-        ⏳
-      </div>
-
-      <strong>
-        Verifying Blockchain...
-      </strong>
-
-      <p>
-        Checking evidence hashes and
-        blockchain integrity.
-      </p>
-
-    </div>
-
-  )}
-
-
-  {/* RESULT */}
-
-  {blockchainStatus && (
-
-    <>
-
-      {/* STATUS */}
-
-      <div
-        className={
-          blockchainStatus.valid
-            ? "blockchain-status verified"
-            : "blockchain-status invalid"
-        }
-      >
-
-        <div className="blockchain-status-icon">
-
-          {blockchainStatus.valid
-            ? "🟢"
-            : "🔴"}
-
-        </div>
-
-        <div>
-
-          <h3>
-
-            {blockchainStatus.valid
-              ? "Blockchain Verified"
-              : "Integrity Violation Detected"}
-
-          </h3>
-
-          <p>
-            {blockchainStatus.message}
-          </p>
-
-        </div>
-
-      </div>
-
-
-      {/* STATISTICS */}
-
-      <div className="stats-grid blockchain-stats">
-
-        <div className="stat-card">
-
-          <span>
-            TOTAL BLOCKS
-          </span>
-
-          <strong>
-            {blockchainStatus.total_blocks || 0}
-          </strong>
-
-          <small>
-            evidence records secured
-          </small>
-
-        </div>
-
-
-        <div className="stat-card">
-
-          <span>
-            VERIFIED BLOCKS
-          </span>
-
-          <strong>
-            {blockchainStatus.verified_blocks || 0}
-          </strong>
-
-          <small>
-            successfully validated
-          </small>
-
-        </div>
-
-
-        <div
-          className={
-            blockchainStatus.tampering_detected
-              ? "stat-card alert-stat"
-              : "stat-card"
-          }
-        >
-
-          <span>
-            EVIDENCE TAMPERING
-          </span>
-
-          <strong>
-
-            {blockchainStatus.tampering_detected
-              ? "YES"
-              : "NO"}
-
-          </strong>
-
-          <small>
-
-            {blockchainStatus.tampering_detected
-              ? "unauthorized changes detected"
-              : "no modification detected"}
-
-          </small>
-
-        </div>
-
-      </div>
-
-
-      {/* TAMPERED BLOCKS */}
-
-      {blockchainStatus.tampering_detected &&
-        blockchainStatus.tampered_blocks?.length > 0 && (
-
-          <div className="tampered-evidence">
-
-            <div className="section-header">
-
-              <div>
-
-                <div className="eyebrow">
-                  SECURITY ALERT
-                </div>
-
-                <h3>
-                  ⚠️ Tampered Evidence Detected
-                </h3>
-
-              </div>
-
-            </div>
-
-
-            {blockchainStatus.tampered_blocks.map(
-              (block, index) => (
-
-                <div
-                  className="tampered-item"
-                  key={
-                    `${block.evidence_id}-${index}`
-                  }
-                >
-
-                  <div>
-
-                    <strong>
-
-                      {block.title ||
-                        block.source_type ||
-                        "Unknown Evidence"}
-
-                    </strong>
-
-
-                    <small>
-
-                      Evidence ID:
-                      {" "}
-                      {block.evidence_id}
-
-                    </small>
-
-
-                    <small>
-
-                      Source:
-                      {" "}
-                      {block.source_type}
-
-                    </small>
-
-                  </div>
-
-
-                  <div className="tamper-errors">
-
-                    {block.errors?.map(
-                      (error, errorIndex) => (
-
-                        <div
-                          key={errorIndex}
-                        >
-
-                          🔴 {error}
-
-                        </div>
-
-                      )
-                    )}
-
-                  </div>
-
-                </div>
-
-              )
-            )}
-
-          </div>
-
-        )}
-
-    </>
-
-  )}
-
-</section>
-
             {analysis?.warnings?.length > 0 && (
               <div className="error-box main-error analysis-warning">
                 <span>{analysis.warnings.join(" ")}</span>
@@ -1888,569 +1646,969 @@ let firLanguage = "en";
               </div>
             )}
 
-            <section className="panel source-panel">
-              <div className="section-header">
-                <div>
-                  <div className="eyebrow">DATA INGESTION</div>
-                  <h2>Add Intelligence Sources</h2>
-                  <p>Provide available intelligence. The system keeps the original text, extracts entities, and builds candidate evidence across sources.</p>
-                </div>
-                <div className="pipeline-badge">INGEST → NLP → GRAPH → ANALYTICS</div>
-              </div>
+            <div className="tabs" role="tablist" aria-label="Investigation workspace" onKeyDown={handleTabKeyDown}>
+              {WORKSPACE_TABS.map((tab) => {
+                const badge = tabBadges[tab.key];
+                const isActive = activeTab === tab.key;
+                return (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    id={`tab-${tab.key}`}
+                    aria-selected={isActive}
+                    aria-controls="workspace-panel"
+                    tabIndex={isActive ? 0 : -1}
+                    className="tab"
+                    onClick={() => setActiveTab(tab.key)}
+                  >
+                    {tab.label}
+                    {badge && <span className={`tab-badge ${badge.tone}`} title={badge.label}>{badge.text}</span>}
+                  </button>
+                );
+              })}
+            </div>
 
-              <div className="source-grid">
-                {SOURCE_TYPES.map((source) => (
-                  <div className="source-card" key={source.key}>
-                    <div className="source-card-head">
-                      <span className="source-icon">{source.icon}</span>
-                      <div><strong>{source.label}</strong><small>{source.hint}</small></div>
-                    </div>
-                    <div className="source-edit-row">
-                      <span className={`source-status ${sourceDrafts[source.key]?.trim() ? "has-content" : ""}`}>
-                        {sourceDrafts[source.key]?.trim()
-                          ? "Saved to case"
-                          : "No record added"}
-                      </span>
+            <div className="tab-panel" role="tabpanel" id="workspace-panel" aria-labelledby={`tab-${activeTab}`} key={activeTab}>
 
-                      <button
-                        type="button"
-                        className="ghost-button small source-edit-button"
-                        onClick={() =>
-                          setEditingSources((prev) => ({
-                            ...prev,
-                            [source.key]: !prev[source.key],
-                          }))
-                        }
-                      >
-                        {editingSources[source.key] ? "Done" : "Edit"}
-                      </button>
-                    </div>
+              {/* ===== OVERVIEW ===== */}
+              {activeTab === "overview" && (
+                <>
+                  <section className="stats-grid">
+                    <div className="stat-card"><span>SOURCES PROCESSED</span><strong>{analysis?.sources?.length || 0}</strong><small>documents in this analysis</small></div>
+                    <div className="stat-card"><span>ENTITIES EXTRACTED</span><strong>{entityTotal}</strong><small>people, places, vehicles & more</small></div>
+                    <div className="stat-card"><span>CANDIDATE LINKS</span><strong>{analysis?.candidate_relationships?.length || 0}</strong><small>model-scored analytical leads</small></div>
+                    <div className="stat-card alert-stat"><span>SUSPICIOUS PATTERNS</span><strong>{analysis?.suspicious_patterns?.length || 0}</strong><small>requires investigator review</small></div>
+                  </section>
 
-                    <div className="source-upload-row">
-                      <label className="ghost-button small source-upload-button">
-                        {pdfUploading[source.key] ? "Reading PDF…" : "Upload PDF"}
-                        <input
-                          type="file"
-                          accept=".pdf,application/pdf"
-                          hidden
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            handleExistingSourcePdfUpload(source.key, file);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                      {uploadedFiles[source.key] && (
-
-  <div className="uploaded-file-info">
-
-    <span className="pdf-icon">
-      📄
-    </span>
-
-    <div>
-
-      <small>
-        UPLOADED SOURCE
-      </small>
-
-      <strong>
-        {uploadedFiles[source.key]}
-      </strong>
-
-    </div>
-
-  </div>
-
-)}
-                    </div>
-
-                    <textarea
-                      rows={5}
-                      placeholder={`Paste ${source.label.toLowerCase()} here…`}
-                      value={sourceDrafts[source.key]}
-                      readOnly={!editingSources[source.key]}
-                      onChange={(e) => {
-                        const value = e.target.value;
-                        sourceDraftsRef.current = {
-                          ...sourceDraftsRef.current,
-                          [source.key]: value,
-                        };
-                        setAnalysisStale(true);
-                        setSourceDrafts((prev) => ({
-                          ...prev,
-                          [source.key]: value,
-                        }));
-                      }}
-                    />
-
-                    {source.key === "FIR" && (
-                      <select
-                        value={sourceLanguage}
-                        disabled={!editingSources.FIR}
-                        onChange={(e) => {
-                          setAnalysisStale(true);
-                          setSourceLanguage(e.target.value);
-                        }}
-                      >
-                        <option value="en">FIR language: English</option>
-                        <option value="hi">FIR language: Hindi</option>
-                        <option value="pa">FIR language: Punjabi</option>
-                      </select>
-                    )}
-                  </div>
-                ))}
-              </div>
-
-              <div className="source-actions">
-                <button className="ghost-button" onClick={() => selected && saveSourcesForInvestigation(selected.id, sourceDraftsRef.current, sourceLanguageRef.current)} disabled={analysisLoading}>Save All Sources</button>
-                <button className="primary-button" onClick={analyzeSourcesForExistingCase} disabled={analysisLoading}>
-                  {analysisLoading ? "Running Intelligence Analysis…" : "Run Intelligence Analysis"}
-                </button>
-                <span>
-                  {sourceSaveStatus} · At least one source is required.
-                  Add only the sources available for the case.
-                  {analysisStale && (
-                    <strong className="analysis-stale">
-                      {" "}Evidence changed — run analysis again to refresh
-                      the graph and analytics.
-                    </strong>
-                  )}
-                </span>
-              </div>
-            </section>
-
-            <section className="analytics-grid">
-              <div className="panel analysis-card">
-                <div className="section-header compact-header"><div><div className="eyebrow">NETWORK INTELLIGENCE</div><h2>Influential Individuals</h2></div></div>
-                <div className="rank-list">
-                  {(analysis?.influential_persons || []).slice(0, 6).map((person, index) => (
-                    <div className="rank-row" key={person.person_id}>
-                      <span className="rank-number">{index + 1}</span>
-                      <div><strong>{person.name}</strong><small>{person.person_id}</small></div>
-                      <div className="rank-score">{Math.round((person.influence_score || 0) * 100)}<small>influence</small></div>
-                    </div>
-                  ))}
-                  {!analysis?.influential_persons?.length && <div className="empty-inline">Run intelligence analysis to identify network-central individuals.</div>}
-                </div>
-              </div>
-
-              <div className="panel analysis-card">
-                <div className="section-header compact-header"><div><div className="eyebrow">PATTERN DETECTION</div><h2>Suspicious Activity Signals</h2></div></div>
-                <div className="pattern-list">
-                  {(analysis?.suspicious_patterns || []).slice(0, 6).map((pattern, index) => (
-                    <div className="pattern-row" key={`${pattern.person_a_id}-${pattern.person_b_id}-${index}`}>
-                      <div className="pattern-icon">!</div>
-                      <div><strong>{pattern.person_a_id} ↔ {pattern.person_b_id}</strong><small>{(pattern.reasons || []).join(" • ") || "Unusual activity combination"}</small></div>
-                      <span>{Math.round((pattern.confidence || 0) * 100)}%</span>
-                    </div>
-                  ))}
-                  {!analysis?.suspicious_patterns?.length && <div className="empty-inline">No suspicious combinations surfaced yet.</div>}
-                </div>
-              </div>
-            </section>
-
-
-
-            {analysis && (
-              <section className="panel investigator-assistance-panel">
-                <style>{`
-                  .investigator-assistance-panel{margin-top:18px}.assistance-title{margin-bottom:18px}.assistance-title p{margin:6px 0 0;color:#8fa3b8}.assistance-insight-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.assist-card{border:1px solid rgba(91,151,211,.28);border-radius:14px;padding:16px;background:rgba(16,31,48,.55);min-height:118px}.assist-card span{display:block;color:#86a3bd;font-size:11px;letter-spacing:1.2px;margin-bottom:10px}.assist-card strong{font-size:17px;display:block;overflow-wrap:anywhere}.assist-card small{display:block;color:#9eb0c2;margin-top:8px;line-height:1.45}.assistance-lower{display:grid;grid-template-columns:1.1fr .9fr;gap:14px;margin-top:14px}.assist-subpanel{border:1px solid rgba(91,151,211,.22);border-radius:14px;padding:16px;background:rgba(9,21,34,.42)}.assist-subpanel h3{margin:0 0 14px}.relationship-bar-row{margin-bottom:14px}.relationship-bar-label{display:flex;justify-content:space-between;gap:12px;font-size:13px;margin-bottom:7px}.relationship-bar-track{height:8px;border-radius:999px;background:rgba(116,144,173,.18);overflow:hidden}.relationship-bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#39b9c8,#4f8fe8)}.recommendation-row{display:flex;gap:10px;padding:11px 0;border-bottom:1px solid rgba(123,151,180,.14);color:#b9c7d5;line-height:1.45}.recommendation-row:last-child{border-bottom:0}.recommendation-icon{color:#65d6b4;font-weight:700}.assist-empty{color:#8295a9;font-size:13px;padding:8px 0}@media(max-width:1050px){.assistance-insight-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.assistance-lower{grid-template-columns:1fr}}@media(max-width:620px){.assistance-insight-grid{grid-template-columns:1fr}}
-                `}</style>
-                <div className="section-header assistance-title">
-                  <div>
-                    <div className="eyebrow">INVESTIGATOR ASSISTANCE</div>
-                    <h2>Visual & Analytical Insights</h2>
-                    <p>Evidence-backed insights to help investigators prioritize relationships, risks and next actions.</p>
-                  </div>
-                </div>
-
-                <div className="assistance-insight-grid">
-                  <div className="assist-card"><span>MOST INFLUENTIAL PERSON</span><strong>{investigatorInsights.influential?.name || "Not identified"}</strong><small>{investigatorInsights.influential ? `${Math.round(Number(investigatorInsights.influential.influence_score || 0) * 100)} influence score` : "Run analysis with connected entities"}</small></div>
-                  <div className="assist-card"><span>STRONGEST RELATIONSHIP</span><strong>{investigatorInsights.strongestRelationship ? `${investigatorInsights.getA(investigatorInsights.strongestRelationship)} ↔ ${investigatorInsights.getB(investigatorInsights.strongestRelationship)}` : "Not identified"}</strong><small>{investigatorInsights.strongestRelationship ? `${Math.round(investigatorInsights.confidence(investigatorInsights.strongestRelationship) * 100)}% evidence confidence` : "No relationship evidence yet"}</small></div>
-                  <div className="assist-card"><span>HIGHEST RISK LEAD</span><strong>{investigatorInsights.highestRisk ? `${investigatorInsights.getA(investigatorInsights.highestRisk)} ↔ ${investigatorInsights.getB(investigatorInsights.highestRisk)}` : "Not identified"}</strong><small>{investigatorInsights.highestRisk?.risk_level ? `${investigatorInsights.highestRisk.risk_level} risk classification` : "No high-risk relationship surfaced"}</small></div>
-                  <div className="assist-card"><span>SUSPICIOUS SIGNALS</span><strong>{investigatorInsights.suspiciousCount}</strong><small>{investigatorInsights.relationshipCount} evidence-backed relationship(s) analyzed</small></div>
-                </div>
-
-                <div className="assistance-lower">
-                  <div className="assist-subpanel">
-                    <div className="eyebrow">VISUAL PRIORITIZATION</div><h3>Relationship Strength</h3>
-                    {investigatorInsights.relationshipBars.length ? investigatorInsights.relationshipBars.map((item, index) => {
-                      const score = Math.round(investigatorInsights.confidence(item) * 100);
-                      const isStrongest = investigatorInsights.strongestRelationships?.some(
-                        (strongest) => strongest === item
-                      );
-                      return <div className={`relationship-bar-row ${isStrongest ? "strongest-relationship-row" : ""}`} key={`${investigatorInsights.getA(item)}-${investigatorInsights.getB(item)}-${index}`}><div className="relationship-bar-label"><span>{investigatorInsights.getA(item)} ↔ {investigatorInsights.getB(item)} {isStrongest && <b className="strongest-label">STRONGEST</b>}</span><strong style={isStrongest ? { color: "#ff4d4f" } : undefined}>{score}%</strong></div><div className="relationship-bar-track"><div className="relationship-bar-fill" style={{ width: `${Math.max(2, Math.min(score, 100))}%`, background: isStrongest ? "#ff4d4f" : undefined, boxShadow: isStrongest ? "0 0 12px rgba(255,77,79,0.65)" : undefined }} /></div></div>;
-                    }) : <div className="assist-empty">Relationship strength will appear after candidate relationships are generated.</div>}
-                  </div>
-                  <div className="assist-subpanel">
-                    <div className="eyebrow">NEXT ACTIONS</div><h3>Investigator Recommendations</h3>
-                    {investigatorInsights.recommendations.map((recommendation, index) => <div className="recommendation-row" key={index}><span className="recommendation-icon">✓</span><span>{recommendation}</span></div>)}
-                  </div>
-                </div>
-              </section>
-            )}
-
-            {analysis && (
-              <section className="panel investigation-summary-panel">
-                <div className="section-header">
-                  <div>
-                    <div className="eyebrow">CASE SUMMARY</div>
-                    <h2>Investigation Overview</h2>
-                    <p>{analysis.summary_text || "Persistent analytical snapshot for this investigation."}</p>
-                  </div>
-                  <div className="summary-run-badge">
-                    {analysis.analysis_run?.created_at
-                      ? `Last analyzed ${new Date(analysis.analysis_run.created_at).toLocaleString()}`
-                      : "Saved case data"}
-                  </div>
-                </div>
-                <div className="summary-grid">
-                  <div className="summary-stat"><span>PEOPLE</span><strong>{analysis.graph?.nodes?.length || 0}</strong></div>
-                  <div className="summary-stat"><span>RELATIONSHIPS</span><strong>{analysis.graph?.links?.length || 0}</strong></div>
-                  <div className="summary-stat"><span>COMMUNITIES</span><strong>{analysis.community_count || 0}</strong></div>
-                  <div className="summary-stat summary-alert"><span>SUSPICIOUS SIGNALS</span><strong>{analysis.suspicious_patterns?.length || 0}</strong></div>
-                </div>
-              </section>
-            )}
-
-            <section className="panel network-workspace">
-              <div className="section-header">
-                <div>
-                  <div className="eyebrow">NETWORK INTELLIGENCE</div>
-                  <h2>Criminal Network Explorer</h2>
-                  <p>NyayaNet builds this network automatically from the intelligence submitted to this investigation. Search is used to focus the generated network on a subject.</p>
-                </div>
-                <div className="legend"><span><i className="legend-dot selected" /> Selected Subject</span><span><i className="legend-dot connected" /> Connected Person</span><span style={{ color: "#ff4d4f" }}>● Most Influential Person</span><span style={{ color: "#ff4d4f" }}>━ Strongest Relationship</span><span>Hover a node for profile details</span></div>
-              </div>
-
-              <div className="network-topbar">
-                <div className="search-panel">
-                  <label>FOCUS WITHIN GENERATED NETWORK</label>
-                  <div className="search-input-wrap">
-                    <span>⌕</span>
-                    <input
-                      value={criminalSearch}
-                      placeholder="Search a person from this investigation…"
-                      onChange={(e) => setCriminalSearch(e.target.value)}
-                      onFocus={() => criminalResults.length && setShowSearchResults(true)}
-                    />
-                    {criminalSearch && <button onClick={resetGraphView}>×</button>}
-                    {searchLoading && <em>Searching…</em>}
-                  </div>
-                  {showSearchResults && (
-                    <div className="search-results">
-                      <div className="search-results-title">MATCHING RECORDS <span>{criminalResults.length}</span></div>
-                      {criminalResults.length ? criminalResults.map((person) => (
-                        <button key={person.id} className="search-result-row" onClick={() => selectCriminal(person)}>
-                          <div className="result-avatar">{initials(person.name)}</div>
-                          <div className="result-main"><strong>{person.name}</strong><small>{person.person_id} · {person.location || "Location unavailable"}</small><span>☎ {person.phone_num || "No phone"}</span></div>
-                          <span className="result-arrow">›</span>
-                        </button>
-                      )) : <div className="empty-inline">No matching person found.</div>}
-                    </div>
-                  )}
-                </div>
-
-                {selectedCriminal && (
-                  <div className="subject-summary">
-                    <div className="subject-avatar">{initials(selectedCriminal.name)}</div>
-                    <div className="subject-main"><span>SELECTED SUBJECT</span><strong>{selectedCriminal.name}</strong><small>{selectedCriminal.person_id} · {selectedCriminal.location || "Location unavailable"}</small></div>
-                    <div className="subject-metric"><span>AGE</span><strong>{selectedCriminal.age || "—"}</strong></div>
-                    <div className="subject-metric"><span>CONNECTIONS</span><strong>{selectedCriminal ? Math.max(0, graph.nodes.length - 1) : analysisGraph.links.length}</strong></div>
-                    <div className="subject-metric"><span>PHONE</span><strong>{selectedCriminal.phone_num || "—"}</strong></div>
-                    <div className="subject-metric"><span>VEHICLE</span><strong>{selectedCriminal.vehicle_num || "—"}</strong></div>
-                  </div>
-                )}
-              </div>
-
-              <div className={`network-body ${selectedRelationship ? "with-details" : ""}`}>
-                <div className="graph-panel">
-                  <div className="graph-titlebar"><div><span>RELATIONSHIP MAP</span><strong>{selectedCriminal ? `${Math.max(0, graph.nodes.length - 1)} connections in focus` : `${analysisGraph.links.length} candidate connections generated from submitted evidence`}</strong></div><button className="ghost-button small" onClick={() => { resetGraphView(); setTimeout(() => graphRef.current?.zoomToFit?.(500, 80), 0); }}>Reset View</button></div>
-                  <div className="graph-canvas">
-                    {graphLoading ? (
-                      <div className="graph-placeholder"><div className="spinner" /><h3>Building subject network…</h3><p>Combining relationship records and model signals.</p></div>
-                    ) : graph.nodes.length === 0 ? (
-                      <div className="graph-placeholder"><div className="placeholder-icon">◌</div><h3>No network generated yet</h3><p>Submit at least one intelligence source and run analysis. The graph is generated only from this investigation's submitted evidence.</p></div>
-                    ) : (
-                      <ForceGraph2D
-                        ref={graphRef}
-                        graphData={graph}
-                        backgroundColor="#06101f"
-                        enableNodeDrag
-                        cooldownTicks={360}
-                        warmupTicks={100}
-                        d3AlphaDecay={0.012}
-                        d3VelocityDecay={0.2}
-                        nodeRelSize={7}
-
-                        // ONLY PEOPLE are rendered as graph nodes.
-                        // The full name is the node label; all other person
-                        // attributes stay inside the hover tooltip.
-                        nodeLabel={(node) => `
-                          <div class="node-tooltip">
-                            <div class="node-tooltip-head">
-                              <div class="node-tooltip-avatar">${escapeHtml(initials(node.name))}</div>
-                              <div>
-                                <strong>${escapeHtml(node.name || "Unknown")}</strong>
-                                <span>PERSON</span>
-                              </div>
-                            </div>
-                            <div class="node-tooltip-grid">
-                              <div><span>AGE</span><b>${escapeHtml(node.age ?? "—")}</b></div>
-                              <div><span>LOCATION</span><b>${escapeHtml(node.location || "—")}</b></div>
-                              <div><span>PHONE</span><b>${escapeHtml(node.phone_num || "—")}</b></div>
-                              <div><span>VEHICLE</span><b>${escapeHtml(node.vehicle_num || "—")}</b></div>
-                              <div><span>ORGANIZATION</span><b>${escapeHtml(node.org || "—")}</b></div>
-                              <div><span>CRIME RECORDED</span><b>${escapeHtml(node.crime_recorded || "—")}</b></div>
-                              <div><span>SOURCES</span><b>${escapeHtml((node.source_types || []).join(" • ") || "—")}</b></div>
-                            </div>
+                  {analysis ? (
+                    <>
+                      <section className="panel investigation-summary-panel">
+                        <div className="section-header">
+                          <div>
+                            <div className="eyebrow">CASE SUMMARY</div>
+                            <h2>Investigation Overview</h2>
+                            <p>{analysis.summary_text || "Persistent analytical snapshot for this investigation."}</p>
                           </div>
-                        `}
+                          <div className="summary-run-badge">
+                            {analysis.analysis_run?.created_at
+                              ? `Last analyzed ${new Date(analysis.analysis_run.created_at).toLocaleString()}`
+                              : "Saved case data"}
+                          </div>
+                        </div>
+                        <div className="summary-grid">
+                          <div className="summary-stat"><span>PEOPLE</span><strong>{analysis.graph?.nodes?.length || 0}</strong></div>
+                          <div className="summary-stat"><span>RELATIONSHIPS</span><strong>{analysis.graph?.links?.length || 0}</strong></div>
+                          <div className="summary-stat"><span>COMMUNITIES</span><strong>{analysis.community_count || 0}</strong></div>
+                          <div className="summary-stat summary-alert"><span>SUSPICIOUS SIGNALS</span><strong>{analysis.suspicious_patterns?.length || 0}</strong></div>
+                        </div>
+                      </section>
+                    </>
+                  ) : (
+                    <TabEmpty title="No analysis yet" actionLabel="Add sources" onAction={() => setActiveTab("sources")}>
+                      Add at least one intelligence source and run the analysis to see the case overview here.
+                    </TabEmpty>
+                  )}
+                </>
+              )}
 
-                        // Relationship hover shows the connection type, why the
-                        // people are connected, evidence counts and confidence.
-                        linkLabel={(link) => `
-                          <div class="edge-tooltip">
-                            <strong>${escapeHtml(link.relationship_type || "Evidence-linked Association")}</strong>
-                            <span class="edge-confidence">
-                              Potential relationship confidence:
-                              ${link.confidence != null
-                                ? `${Math.round(Number(link.confidence) * 100)}%`
-                                : "N/A"}
+              {/* ===== SOURCES ===== */}
+              {activeTab === "sources" && (
+                <>
+                  <section className="panel source-panel">
+                    <div className="section-header">
+                      <div>
+                        <div className="eyebrow">DATA INGESTION</div>
+                        <h2>Add Intelligence Sources</h2>
+                        <p>Provide available intelligence. The system keeps the original text, extracts entities, and builds candidate evidence across sources.</p>
+                      </div>
+                      <div className="pipeline-badge">INGEST → NLP → GRAPH → ANALYTICS</div>
+                    </div>
+
+                    <div className="source-grid">
+                      {SOURCE_TYPES.map((source) => (
+                        <div className="source-card" key={source.key}>
+                          <div className="source-card-head">
+                            <span className="source-icon">{source.icon}</span>
+                            <div><strong>{source.label}</strong><small>{source.hint}</small></div>
+                          </div>
+                          <div className="source-edit-row">
+                            <span className={`source-status ${sourceDrafts[source.key]?.trim() ? "has-content" : ""}`}>
+                              {sourceDrafts[source.key]?.trim()
+                                ? "Saved to case"
+                                : "No record added"}
                             </span>
-                            <p>${escapeHtml(link.reason || link.relationship_description || "Evidence-backed relationship.")}</p>
-                            <div class="edge-evidence">
-                              ${Number(link.calls || 0) > 0 ? `<span>☎ ${Number(link.calls)} call(s)</span>` : ""}
-                              ${Number(link.transactions || 0) > 0 ? `<span>₹ ${Number(link.transactions)} transaction(s)</span>` : ""}
-                              ${Number(link.meetings || 0) > 0 ? `<span>● ${Number(link.meetings)} meeting(s)</span>` : ""}
+
+                            <button
+                              type="button"
+                              className="ghost-button small source-edit-button"
+                              onClick={() =>
+                                setEditingSources((prev) => ({
+                                  ...prev,
+                                  [source.key]: !prev[source.key],
+                                }))
+                              }
+                            >
+                              {editingSources[source.key] ? "Done" : "Edit"}
+                            </button>
+                          </div>
+
+                          <div className="source-upload-row">
+                            <label className="ghost-button small source-upload-button">
+                              {pdfUploading[source.key] ? "Reading PDF…" : "Upload PDF"}
+                              <input
+                                type="file"
+                                accept=".pdf,application/pdf"
+                                hidden
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  handleExistingSourcePdfUpload(source.key, file);
+                                  e.target.value = "";
+                                }}
+                              />
+                            </label>
+                            {uploadedFiles[source.key] && (
+
+        <div className="uploaded-file-info">
+
+          <span className="pdf-icon">
+            📄
+          </span>
+
+          <div>
+
+            <small>
+              UPLOADED SOURCE
+            </small>
+
+            <strong>
+              {uploadedFiles[source.key]}
+            </strong>
+
+          </div>
+
+        </div>
+
+      )}
+                          </div>
+
+                          <textarea
+                            rows={5}
+                            placeholder={`Paste ${source.label.toLowerCase()} here…`}
+                            value={sourceDrafts[source.key]}
+                            readOnly={!editingSources[source.key]}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              sourceDraftsRef.current = {
+                                ...sourceDraftsRef.current,
+                                [source.key]: value,
+                              };
+                              setAnalysisStale(true);
+                              setSourceDrafts((prev) => ({
+                                ...prev,
+                                [source.key]: value,
+                              }));
+                            }}
+                          />
+
+                          {source.key === "FIR" && (
+                            <select
+                              value={sourceLanguage}
+                              disabled={!editingSources.FIR}
+                              onChange={(e) => {
+                                setAnalysisStale(true);
+                                setSourceLanguage(e.target.value);
+                              }}
+                            >
+                              <option value="en">FIR language: English</option>
+                              <option value="hi">FIR language: Hindi</option>
+                              <option value="pa">FIR language: Punjabi</option>
+                            </select>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="source-actions">
+                      <button className="ghost-button" onClick={() => selected && saveSourcesForInvestigation(selected.id, sourceDraftsRef.current, sourceLanguageRef.current)} disabled={analysisLoading}>Save All Sources</button>
+                      <button className="primary-button" onClick={analyzeSourcesForExistingCase} disabled={analysisLoading}>
+                        {analysisLoading ? "Running Intelligence Analysis…" : "Run Intelligence Analysis"}
+                      </button>
+                      <span>
+                        {sourceSaveStatus} · At least one source is required.
+                        Add only the sources available for the case.
+                        {analysisStale && (
+                          <strong className="analysis-stale">
+                            {" "}Evidence changed — run analysis again to refresh
+                            the graph and analytics.
+                          </strong>
+                        )}
+                      </span>
+                    </div>
+                  </section>
+                </>
+              )}
+
+              {/* ===== NETWORK EXPLORER ===== */}
+              {activeTab === "network" && (
+                <>
+                  <section className="panel network-workspace">
+                    <div className="section-header">
+                      <div>
+                        <div className="eyebrow">NETWORK INTELLIGENCE</div>
+                        <h2>Criminal Network Explorer</h2>
+                        <p>NyayaNet builds this network automatically from the intelligence submitted to this investigation. Search is used to focus the generated network on a subject.</p>
+                      </div>
+                      <div className="legend"><span><i className="legend-dot selected" /> Selected Subject</span><span><i className="legend-dot connected" /> Connected Person</span><span className="legend-influential">● Most Influential Person</span><span className="legend-strongest">━ Strongest Relationship</span><span>Hover a node for profile details</span></div>
+                    </div>
+
+                    <div className="network-topbar">
+                      <div className="search-panel">
+                        <label>FOCUS WITHIN GENERATED NETWORK</label>
+                        <div className="search-input-wrap">
+                          <span>⌕</span>
+                          <input
+                            value={criminalSearch}
+                            placeholder="Search a person from this investigation…"
+                            onChange={(e) => setCriminalSearch(e.target.value)}
+                            onFocus={() => criminalResults.length && setShowSearchResults(true)}
+                          />
+                          {criminalSearch && <button onClick={resetGraphView}>×</button>}
+                          {searchLoading && <em>Searching…</em>}
+                        </div>
+                        {showSearchResults && (
+                          <div className="search-results">
+                            <div className="search-results-title">MATCHING RECORDS <span>{criminalResults.length}</span></div>
+                            {criminalResults.length ? criminalResults.map((person) => (
+                              <button key={person.id} className="search-result-row" onClick={() => selectCriminal(person)}>
+                                <div className="result-avatar">{initials(person.name)}</div>
+                                <div className="result-main"><strong>{person.name}</strong><small>{person.person_id} · {person.location || "Location unavailable"}</small><span>☎ {person.phone_num || "No phone"}</span></div>
+                                <span className="result-arrow">›</span>
+                              </button>
+                            )) : <div className="empty-inline">No matching person found.</div>}
+                          </div>
+                        )}
+                      </div>
+
+                      {selectedCriminal && (
+                        <div className="subject-summary">
+                          <div className="subject-avatar">{initials(selectedCriminal.name)}</div>
+                          <div className="subject-main"><span>SELECTED SUBJECT</span><strong>{selectedCriminal.name}</strong><small>{selectedCriminal.person_id} · {selectedCriminal.location || "Location unavailable"}</small></div>
+                          <div className="subject-metric"><span>AGE</span><strong>{selectedCriminal.age || "—"}</strong></div>
+                          <div className="subject-metric"><span>CONNECTIONS</span><strong>{selectedCriminal ? Math.max(0, graph.nodes.length - 1) : analysisGraph.links.length}</strong></div>
+                          <div className="subject-metric"><span>PHONE</span><strong>{selectedCriminal.phone_num || "—"}</strong></div>
+                          <div className="subject-metric"><span>VEHICLE</span><strong>{selectedCriminal.vehicle_num || "—"}</strong></div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className={`network-body ${selectedRelationship ? "with-details" : ""}`}>
+                      <div className="graph-panel">
+                        <div className="graph-titlebar"><div><span>RELATIONSHIP MAP</span><strong>{selectedCriminal ? `${Math.max(0, graph.nodes.length - 1)} connections in focus` : `${analysisGraph.links.length} candidate connections generated from submitted evidence`}</strong></div><button className="ghost-button small" onClick={() => { resetGraphView(); setTimeout(() => graphRef.current?.zoomToFit?.(500, 80), 0); }}>Reset View</button></div>
+                        <div className="graph-canvas">
+                          {graphLoading ? (
+                            <div className="graph-placeholder"><div className="spinner" /><h3>Building subject network…</h3><p>Combining relationship records and model signals.</p></div>
+                          ) : graph.nodes.length === 0 ? (
+                            <div className="graph-placeholder"><div className="placeholder-icon">◌</div><h3>No network generated yet</h3><p>Submit at least one intelligence source and run analysis. The graph is generated only from this investigation's submitted evidence.</p></div>
+                          ) : (
+                            <ForceGraph2D
+                              ref={graphRef}
+                              graphData={graph}
+                              backgroundColor={GRAPH_COLORS.background}
+                              enableNodeDrag
+                              cooldownTicks={360}
+                              warmupTicks={100}
+                              d3AlphaDecay={0.012}
+                              d3VelocityDecay={0.2}
+                              nodeRelSize={7}
+
+                              // ONLY PEOPLE are rendered as graph nodes.
+                              // The full name is the node label; all other person
+                              // attributes stay inside the hover tooltip.
+                              nodeLabel={(node) => `
+                                <div class="node-tooltip">
+                                  <div class="node-tooltip-head">
+                                    <div class="node-tooltip-avatar">${escapeHtml(initials(node.name))}</div>
+                                    <div>
+                                      <strong>${escapeHtml(node.name || "Unknown")}</strong>
+                                      <span>PERSON</span>
+                                    </div>
+                                  </div>
+                                  <div class="node-tooltip-grid">
+                                    <div><span>AGE</span><b>${escapeHtml(node.age ?? "—")}</b></div>
+                                    <div><span>LOCATION</span><b>${escapeHtml(node.location || "—")}</b></div>
+                                    <div><span>PHONE</span><b>${escapeHtml(node.phone_num || "—")}</b></div>
+                                    <div><span>VEHICLE</span><b>${escapeHtml(node.vehicle_num || "—")}</b></div>
+                                    <div><span>ORGANIZATION</span><b>${escapeHtml(node.org || "—")}</b></div>
+                                    <div><span>CRIME RECORDED</span><b>${escapeHtml(node.crime_recorded || "—")}</b></div>
+                                    <div><span>SOURCES</span><b>${escapeHtml((node.source_types || []).join(" • ") || "—")}</b></div>
+                                  </div>
+                                </div>
+                              `}
+
+                              // Relationship hover shows the connection type, why the
+                              // people are connected, evidence counts and confidence.
+                              linkLabel={(link) => `
+                                <div class="edge-tooltip">
+                                  <strong>${escapeHtml(link.relationship_type || "Evidence-linked Association")}</strong>
+                                  <span class="edge-confidence">
+                                    Potential relationship confidence:
+                                    ${link.confidence != null
+                                      ? `${Math.round(Number(link.confidence) * 100)}%`
+                                      : "N/A"}
+                                  </span>
+                                  <p>${escapeHtml(link.reason || link.relationship_description || "Evidence-backed relationship.")}</p>
+                                  <div class="edge-evidence">
+                                    ${Number(link.calls || 0) > 0 ? `<span>☎ ${Number(link.calls)} call(s)</span>` : ""}
+                                    ${Number(link.transactions || 0) > 0 ? `<span>₹ ${Number(link.transactions)} transaction(s)</span>` : ""}
+                                    ${Number(link.meetings || 0) > 0 ? `<span>● ${Number(link.meetings)} meeting(s)</span>` : ""}
+                                  </div>
+                                </div>
+                              `}
+
+                              nodeCanvasObject={(node, ctx, globalScale) => {
+                                const isHovered = hoveredNode === node;
+                                const isCenter = Boolean(node.is_center);
+                                const isInfluential = isInfluentialGraphNode(node);
+                                const radius = isHovered || isCenter || isInfluential ? 16 : 12;
+
+                                ctx.save();
+
+                                if (isHovered || isCenter || isInfluential) {
+                                  ctx.beginPath();
+                                  ctx.arc(node.x, node.y, radius + 8, 0, Math.PI * 2);
+                                  ctx.fillStyle = isInfluential
+                                    ? GRAPH_COLORS.influential.halo
+                                    : isCenter
+                                      ? GRAPH_COLORS.center.halo
+                                      : GRAPH_COLORS.node.halo;
+                                  ctx.fill();
+                                }
+
+                                // Soft glow: strong for the states that matter, a faint bloom otherwise.
+                                ctx.shadowColor = isInfluential
+                                  ? GRAPH_COLORS.influential.glow
+                                  : isCenter ? GRAPH_COLORS.center.glow : GRAPH_COLORS.node.glow;
+                                ctx.shadowBlur = isHovered || isCenter || isInfluential ? 24 : 9;
+
+                                ctx.beginPath();
+                                ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
+                                ctx.fillStyle = isInfluential
+                                  ? GRAPH_COLORS.influential.fill
+                                  : isCenter ? GRAPH_COLORS.center.fill : GRAPH_COLORS.node.fill;
+                                ctx.fill();
+                                ctx.strokeStyle = isInfluential
+                                  ? GRAPH_COLORS.influential.stroke
+                                  : isCenter
+                                    ? GRAPH_COLORS.center.stroke
+                                    : isHovered
+                                      ? GRAPH_COLORS.node.hover
+                                      : GRAPH_COLORS.node.stroke;
+                                ctx.lineWidth = isHovered ? 3 : 2;
+                                ctx.stroke();
+                                ctx.shadowBlur = 0;
+
+                                ctx.font = "700 11px Inter, system-ui, sans-serif";
+                                ctx.fillStyle = GRAPH_COLORS.label.initials;
+                                ctx.textAlign = "center";
+                                ctx.textBaseline = "middle";
+                                ctx.fillText(initials(node.name), node.x, node.y);
+
+                                if (isInfluential) {
+                                  ctx.font = "700 10px Inter, system-ui, sans-serif";
+                                  ctx.fillStyle = GRAPH_COLORS.influential.star;
+                                  ctx.fillText("★", node.x, node.y - radius - 7);
+                                }
+
+                                // Keep names readable but compact. No IDs or entity
+                                // metadata are painted onto the graph.
+                                const name = node.name || "Unknown";
+                                const nameSize = Math.max(
+                                  10,
+                                  Math.min(13, 12 / Math.max(globalScale, 0.8))
+                                );
+                                ctx.font = `600 ${nameSize}px Inter, system-ui, sans-serif`;
+
+                                const textWidth = ctx.measureText(name).width;
+                                const pillWidth = textWidth + 14;
+                                const pillHeight = nameSize + 10;
+                                const pillY = node.y + radius + 7;
+
+                                ctx.fillStyle = GRAPH_COLORS.label.pill;
+                                ctx.beginPath();
+                                ctx.roundRect(
+                                  node.x - pillWidth / 2,
+                                  pillY,
+                                  pillWidth,
+                                  pillHeight,
+                                  6
+                                );
+                                ctx.fill();
+
+                                ctx.fillStyle = GRAPH_COLORS.label.text;
+                                ctx.textBaseline = "middle";
+                                ctx.fillText(name, node.x, pillY + pillHeight / 2);
+
+                                ctx.restore();
+                              }}
+
+                              // Keep the graph clean: no permanent relationship prose.
+                              // Confidence is always visible as a compact badge on the
+                              // relationship itself, while full evidence appears on hover.
+                              linkCanvasObjectMode={() => "after"}
+                              linkCanvasObject={(link, ctx, globalScale) => {
+                                const source = link.source;
+                                const target = link.target;
+                                if (!source || !target) return;
+                                if (typeof source.x !== "number" || typeof target.x !== "number") return;
+
+                                const isStrongest = isStrongestGraphLink(link);
+                                const confidence = link.confidence != null
+                                  ? `${Math.round(Number(link.confidence) * 100)}%`
+                                  : "—";
+
+                                const x = (source.x + target.x) / 2;
+                                const y = (source.y + target.y) / 2;
+                                const fontSize = Math.max(9, Math.min(12, 10 / Math.max(globalScale, 0.8)));
+
+                                ctx.save();
+                                ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
+                                const label = confidence;
+                                const width = ctx.measureText(label).width + 14;
+                                const height = fontSize + 9;
+
+                                ctx.fillStyle = isStrongest
+                                  ? GRAPH_COLORS.badge.strongestFill
+                                  : hoveredLink === link
+                                    ? GRAPH_COLORS.badge.hoverFill
+                                    : GRAPH_COLORS.badge.fill;
+                                ctx.strokeStyle = isStrongest
+                                  ? GRAPH_COLORS.badge.strongestStroke
+                                  : hoveredLink === link
+                                    ? GRAPH_COLORS.badge.hoverStroke
+                                    : GRAPH_COLORS.badge.stroke;
+                                ctx.lineWidth = hoveredLink === link ? 1.5 : 1;
+
+                                if (isStrongest || hoveredLink === link) {
+                                  ctx.shadowColor = isStrongest ? GRAPH_COLORS.influential.glow : GRAPH_COLORS.node.glow;
+                                  ctx.shadowBlur = 14;
+                                }
+
+                                ctx.beginPath();
+                                ctx.roundRect(
+                                  x - width / 2,
+                                  y - height / 2,
+                                  width,
+                                  height,
+                                  5
+                                );
+                                ctx.fill();
+                                ctx.stroke();
+                                ctx.shadowBlur = 0;
+
+                                ctx.fillStyle = isStrongest ? GRAPH_COLORS.badge.strongestText : GRAPH_COLORS.badge.text;
+                                ctx.textAlign = "center";
+                                ctx.textBaseline = "middle";
+                                ctx.fillText(label, x, y);
+                                ctx.restore();
+                              }}
+
+                              linkWidth={(link) =>
+                                isStrongestGraphLink(link)
+                                  ? 4.2
+                                  : hoveredLink === link ? 3.5 : 1.6
+                              }
+                              linkColor={(link) =>
+                                isStrongestGraphLink(link)
+                                  ? GRAPH_COLORS.link.strongest
+                                  : hoveredLink === link ? GRAPH_COLORS.link.hover : GRAPH_COLORS.link.base
+                              }
+                              linkDirectionalArrowLength={7}
+                              linkDirectionalArrowRelPos={1}
+                              linkCurvature={0.08}
+
+                              onNodeHover={(node) => setHoveredNode(node || null)}
+                              onLinkHover={(link) => setHoveredLink(link || null)}
+                              onNodeClick={(node) => setSelectedCriminal(node)}
+                              onLinkClick={(link) => setSelectedRelationship(link)}
+
+                              onNodeDragEnd={(node) => {
+                                node.fx = null;
+                                node.fy = null;
+                                graphRef.current?.d3ReheatSimulation?.();
+                              }}
+
+                              onEngineStop={() => {
+                                graphRef.current?.zoomToFit?.(700, 110);
+                              }}
+                            />
+                          )}
+                          <div className="graph-help">Generated from current case evidence • Drag nodes • Scroll to zoom • Click a relationship for evidence details • Hover a node for profile information</div>
+                        </div>
+                      </div>
+
+                      {selectedRelationship && (
+                        <aside className="relationship-panel">
+                          <div className="relationship-panel-head"><div><span className="eyebrow">RELATIONSHIP INTELLIGENCE</span><h3>Connection Details</h3></div><button onClick={() => setSelectedRelationship(null)}>×</button></div>
+                          <div className="relationship-subjects">
+                            <div>
+                              <span>PERSON A</span>
+                              <strong>
+                                {graph.nodes.find((n) => n.id === (
+                                  typeof selectedRelationship.source === "object"
+                                    ? selectedRelationship.source.id
+                                    : selectedRelationship.source
+                                ))?.name || selectedRelationship.source}
+                              </strong>
+                            </div>
+                            <div className="relationship-arrow">↔</div>
+                            <div>
+                              <span>PERSON B</span>
+                              <strong>
+                                {graph.nodes.find((n) => n.id === (
+                                  typeof selectedRelationship.target === "object"
+                                    ? selectedRelationship.target.id
+                                    : selectedRelationship.target
+                                ))?.name || selectedRelationship.target}
+                              </strong>
                             </div>
                           </div>
-                        `}
+                          <div className="relationship-type-block"><span>RELATIONSHIP TYPE</span><strong>{selectedRelationship.relationship_type || "Potential Relationship"}</strong><em>{selectedRelationship.confidence != null ? `${Math.round(selectedRelationship.confidence * 100)}% analytical confidence` : "Confidence unavailable"}</em></div>
+                          <div className="relationship-metrics"><div><span>PHONE CALLS</span><strong>{selectedRelationship.calls || 0}</strong></div><div><span>TRANSACTIONS</span><strong>{selectedRelationship.transactions || 0}</strong></div><div><span>MEETINGS</span><strong>{selectedRelationship.meetings || 0}</strong></div><div><span>TRANSACTION VALUE</span><strong>₹{Number(selectedRelationship.total_transaction_amount || 0).toLocaleString("en-IN")}</strong></div></div>
+                          <div className="relationship-evidence"><span>EVIDENCE EXPLANATION</span><p>{selectedRelationship.relationship_description || selectedRelationship.reason || "No explanation is available for this candidate link."}</p></div>
+                          <div className="lead-warning">Analytical lead only. This score does not establish criminal guilt or prove the stated relationship.</div>
+                        </aside>
+                      )}
+                    </div>
+                  </section>
+                </>
+              )}
 
-                        nodeCanvasObject={(node, ctx, globalScale) => {
-                          const isHovered = hoveredNode === node;
-                          const isCenter = Boolean(node.is_center);
-                          const isInfluential = isInfluentialGraphNode(node);
-                          const radius = isHovered || isCenter || isInfluential ? 16 : 12;
-
-                          ctx.save();
-
-                          if (isHovered || isCenter || isInfluential) {
-                            ctx.beginPath();
-                            ctx.arc(node.x, node.y, radius + 8, 0, Math.PI * 2);
-                            ctx.fillStyle = isInfluential
-                              ? "rgba(255, 77, 79, 0.20)"
-                              : isCenter
-                                ? "rgba(46, 232, 137, 0.14)"
-                                : "rgba(74, 165, 255, 0.12)";
-                            ctx.fill();
-                          }
-
-                          ctx.beginPath();
-                          ctx.arc(node.x, node.y, radius, 0, Math.PI * 2);
-                          ctx.fillStyle = isInfluential
-                            ? "#4a0d12"
-                            : isCenter ? "#073a2d" : "#102944";
-                          ctx.fill();
-                          ctx.strokeStyle = isInfluential
-                            ? "#ff4d4f"
-                            : isCenter
-                              ? "#2ee889"
-                              : isHovered
-                                ? "#b9ddff"
-                                : "#4aa5ff";
-                          ctx.lineWidth = isHovered ? 3 : 2;
-                          ctx.stroke();
-
-                          ctx.font = "700 11px Inter, system-ui, sans-serif";
-                          ctx.fillStyle = "#f5f9ff";
-                          ctx.textAlign = "center";
-                          ctx.textBaseline = "middle";
-                          ctx.fillText(initials(node.name), node.x, node.y);
-
-                          if (isInfluential) {
-                            ctx.font = "700 10px Inter, system-ui, sans-serif";
-                            ctx.fillStyle = "#ff6b6b";
-                            ctx.fillText("★", node.x, node.y - radius - 7);
-                          }
-
-                          // Keep names readable but compact. No IDs or entity
-                          // metadata are painted onto the graph.
-                          const name = node.name || "Unknown";
-                          const nameSize = Math.max(
-                            10,
-                            Math.min(13, 12 / Math.max(globalScale, 0.8))
-                          );
-                          ctx.font = `600 ${nameSize}px Inter, system-ui, sans-serif`;
-
-                          const textWidth = ctx.measureText(name).width;
-                          const pillWidth = textWidth + 14;
-                          const pillHeight = nameSize + 10;
-                          const pillY = node.y + radius + 7;
-
-                          ctx.fillStyle = "rgba(4, 13, 25, 0.88)";
-                          ctx.beginPath();
-                          ctx.roundRect(
-                            node.x - pillWidth / 2,
-                            pillY,
-                            pillWidth,
-                            pillHeight,
-                            6
-                          );
-                          ctx.fill();
-
-                          ctx.fillStyle = "#eef6ff";
-                          ctx.textBaseline = "middle";
-                          ctx.fillText(name, node.x, pillY + pillHeight / 2);
-
-                          ctx.restore();
-                        }}
-
-                        // Keep the graph clean: no permanent relationship prose.
-                        // Confidence is always visible as a compact badge on the
-                        // relationship itself, while full evidence appears on hover.
-                        linkCanvasObjectMode={() => "after"}
-                        linkCanvasObject={(link, ctx, globalScale) => {
-                          const source = link.source;
-                          const target = link.target;
-                          if (!source || !target) return;
-                          if (typeof source.x !== "number" || typeof target.x !== "number") return;
-
-                          const isStrongest = isStrongestGraphLink(link);
-                          const confidence = link.confidence != null
-                            ? `${Math.round(Number(link.confidence) * 100)}%`
-                            : "—";
-
-                          const x = (source.x + target.x) / 2;
-                          const y = (source.y + target.y) / 2;
-                          const fontSize = Math.max(9, Math.min(12, 10 / Math.max(globalScale, 0.8)));
-
-                          ctx.save();
-                          ctx.font = `700 ${fontSize}px Inter, system-ui, sans-serif`;
-                          const label = confidence;
-                          const width = ctx.measureText(label).width + 14;
-                          const height = fontSize + 9;
-
-                          ctx.fillStyle = isStrongest
-                            ? "rgba(70, 10, 15, 0.98)"
-                            : hoveredLink === link
-                              ? "rgba(10, 35, 60, 0.98)"
-                              : "rgba(4, 13, 25, 0.88)";
-                          ctx.strokeStyle = isStrongest
-                            ? "rgba(255, 77, 79, 0.95)"
-                            : hoveredLink === link
-                              ? "rgba(113, 186, 255, 0.85)"
-                              : "rgba(99, 179, 255, 0.38)";
-                          ctx.lineWidth = hoveredLink === link ? 1.5 : 1;
-
-                          ctx.beginPath();
-                          ctx.roundRect(
-                            x - width / 2,
-                            y - height / 2,
-                            width,
-                            height,
-                            5
-                          );
-                          ctx.fill();
-                          ctx.stroke();
-
-                          ctx.fillStyle = isStrongest ? "#ffb3b3" : "#dff0ff";
-                          ctx.textAlign = "center";
-                          ctx.textBaseline = "middle";
-                          ctx.fillText(label, x, y);
-                          ctx.restore();
-                        }}
-
-                        linkWidth={(link) =>
-                          isStrongestGraphLink(link)
-                            ? 4.2
-                            : hoveredLink === link ? 3.5 : 1.6
-                        }
-                        linkColor={(link) =>
-                          isStrongestGraphLink(link)
-                            ? "#ff4d4f"
-                            : hoveredLink === link ? "#71baff" : "rgba(65, 155, 235, 0.52)"
-                        }
-                        linkDirectionalArrowLength={7}
-                        linkDirectionalArrowRelPos={1}
-                        linkCurvature={0.08}
-
-                        onNodeHover={(node) => setHoveredNode(node || null)}
-                        onLinkHover={(link) => setHoveredLink(link || null)}
-                        onNodeClick={(node) => setSelectedCriminal(node)}
-                        onLinkClick={(link) => setSelectedRelationship(link)}
-
-                        onNodeDragEnd={(node) => {
-                          node.fx = null;
-                          node.fy = null;
-                          graphRef.current?.d3ReheatSimulation?.();
-                        }}
-
-                        onEngineStop={() => {
-                          graphRef.current?.zoomToFit?.(700, 110);
-                        }}
-                      />
-                    )}
-                    <div className="graph-help">Generated from current case evidence • Drag nodes • Scroll to zoom • Click a relationship for evidence details • Hover a node for profile information</div>
-                  </div>
-                </div>
-
-                {selectedRelationship && (
-                  <aside className="relationship-panel">
-                    <div className="relationship-panel-head"><div><span className="eyebrow">RELATIONSHIP INTELLIGENCE</span><h3>Connection Details</h3></div><button onClick={() => setSelectedRelationship(null)}>×</button></div>
-                    <div className="relationship-subjects">
-                      <div>
-                        <span>PERSON A</span>
-                        <strong>
-                          {graph.nodes.find((n) => n.id === (
-                            typeof selectedRelationship.source === "object"
-                              ? selectedRelationship.source.id
-                              : selectedRelationship.source
-                          ))?.name || selectedRelationship.source}
-                        </strong>
-                      </div>
-                      <div className="relationship-arrow">↔</div>
-                      <div>
-                        <span>PERSON B</span>
-                        <strong>
-                          {graph.nodes.find((n) => n.id === (
-                            typeof selectedRelationship.target === "object"
-                              ? selectedRelationship.target.id
-                              : selectedRelationship.target
-                          ))?.name || selectedRelationship.target}
-                        </strong>
+              {/* ===== ANALYTICS ===== */}
+              {activeTab === "analytics" && (
+                <>
+                  <section className="analytics-grid">
+                    <div className="panel analysis-card">
+                      <div className="section-header compact-header"><div><div className="eyebrow">NETWORK INTELLIGENCE</div><h2>Influential Individuals</h2></div></div>
+                      <div className="rank-list">
+                        {(analysis?.influential_persons || []).slice(0, 6).map((person, index) => (
+                          <div className="rank-row" key={person.person_id}>
+                            <span className="rank-number">{index + 1}</span>
+                            <div><strong>{person.name}</strong><small>{person.person_id}</small></div>
+                            <div className="rank-score">{Math.round((person.influence_score || 0) * 100)}<small>influence</small></div>
+                          </div>
+                        ))}
+                        {!analysis?.influential_persons?.length && <div className="empty-inline">Run intelligence analysis to identify network-central individuals.</div>}
                       </div>
                     </div>
-                    <div className="relationship-type-block"><span>RELATIONSHIP TYPE</span><strong>{selectedRelationship.relationship_type || "Potential Relationship"}</strong><em>{selectedRelationship.confidence != null ? `${Math.round(selectedRelationship.confidence * 100)}% analytical confidence` : "Confidence unavailable"}</em></div>
-                    <div className="relationship-metrics"><div><span>PHONE CALLS</span><strong>{selectedRelationship.calls || 0}</strong></div><div><span>TRANSACTIONS</span><strong>{selectedRelationship.transactions || 0}</strong></div><div><span>MEETINGS</span><strong>{selectedRelationship.meetings || 0}</strong></div><div><span>TRANSACTION VALUE</span><strong>₹{Number(selectedRelationship.total_transaction_amount || 0).toLocaleString("en-IN")}</strong></div></div>
-                    <div className="relationship-evidence"><span>EVIDENCE EXPLANATION</span><p>{selectedRelationship.relationship_description || selectedRelationship.reason || "No explanation is available for this candidate link."}</p></div>
-                    <div className="lead-warning">Analytical lead only. This score does not establish criminal guilt or prove the stated relationship.</div>
-                  </aside>
-                )}
-              </div>
-            </section>
 
-            <section className="utility-grid">
-              <div className="panel">
-                <div className="section-header compact-header"><div><div className="eyebrow">NLP ENGINE</div><h2>Standalone FIR Intelligence</h2></div></div>
-                <textarea className="utility-textarea" rows={7} value={firText} onChange={(e) => setFirText(e.target.value)} placeholder="Paste an additional FIR / report for focused entity extraction…" />
-                <div className="utility-actions"><select value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="pa">Punjabi</option></select><button className="primary-button" onClick={analyzeFIR} disabled={firAnalyzing}>{firAnalyzing ? "Analyzing…" : "Extract Entities"}</button></div>
-                {firEntities.length > 0 && <div className="entity-list">{firEntities.map((entity, index) => <div className="entity-chip" key={`${entity.label}-${entity.text}-${index}`}><span>{entity.label}</span><strong>{entity.text}</strong></div>)}</div>}
+                    <div className="panel analysis-card">
+                      <div className="section-header compact-header"><div><div className="eyebrow">PATTERN DETECTION</div><h2>Suspicious Activity Signals</h2></div></div>
+                      <div className="pattern-list">
+                        {(analysis?.suspicious_patterns || []).slice(0, 6).map((pattern, index) => (
+                          <div className="pattern-row" key={`${pattern.person_a_id}-${pattern.person_b_id}-${index}`}>
+                            <div className="pattern-icon">!</div>
+                            <div><strong>{pattern.person_a_id} ↔ {pattern.person_b_id}</strong><small>{(pattern.reasons || []).join(" • ") || "Unusual activity combination"}</small></div>
+                            <span>{Math.round((pattern.confidence || 0) * 100)}%</span>
+                          </div>
+                        ))}
+                        {!analysis?.suspicious_patterns?.length && <div className="empty-inline">No suspicious combinations surfaced yet.</div>}
+                      </div>
+                    </div>
+                  </section>
+                </>
+              )}
+
+              {/* ===== INSIGHTS (Investigator Assistance) ===== */}
+              {activeTab === "insights" && (
+                analysis ? (
+                  <>
+                  <section className="panel investigator-assistance-panel">
+                    <div className="section-header assistance-title">
+                      <div>
+                        <div className="eyebrow">INVESTIGATOR ASSISTANCE</div>
+                        <h2>Visual & Analytical Insights</h2>
+                        <p>Evidence-backed insights to help investigators prioritize relationships, risks and next actions.</p>
+                      </div>
+                    </div>
+
+                    <div className="assistance-insight-grid">
+                      <div className="assist-card"><span>MOST INFLUENTIAL PERSON</span><strong>{investigatorInsights.influential?.name || "Not identified"}</strong><small>{investigatorInsights.influential ? `${Math.round(Number(investigatorInsights.influential.influence_score || 0) * 100)} influence score` : "Run analysis with connected entities"}</small></div>
+                      <div className="assist-card"><span>STRONGEST RELATIONSHIP</span><strong>{investigatorInsights.strongestRelationship ? `${investigatorInsights.getA(investigatorInsights.strongestRelationship)} ↔ ${investigatorInsights.getB(investigatorInsights.strongestRelationship)}` : "Not identified"}</strong><small>{investigatorInsights.strongestRelationship ? `${Math.round(investigatorInsights.confidence(investigatorInsights.strongestRelationship) * 100)}% evidence confidence` : "No relationship evidence yet"}</small></div>
+                      <div className="assist-card"><span>HIGHEST RISK LEAD</span><strong>{investigatorInsights.highestRisk ? `${investigatorInsights.getA(investigatorInsights.highestRisk)} ↔ ${investigatorInsights.getB(investigatorInsights.highestRisk)}` : "Not identified"}</strong><small>{investigatorInsights.highestRisk?.risk_level ? `${investigatorInsights.highestRisk.risk_level} risk classification` : "No high-risk relationship surfaced"}</small></div>
+                      <div className="assist-card"><span>SUSPICIOUS SIGNALS</span><strong>{investigatorInsights.suspiciousCount}</strong><small>{investigatorInsights.relationshipCount} evidence-backed relationship(s) analyzed</small></div>
+                    </div>
+
+                    <div className="assistance-lower">
+                      <div className="assist-subpanel">
+                        <div className="eyebrow">VISUAL PRIORITIZATION</div><h3>Relationship Strength</h3>
+                        {investigatorInsights.relationshipBars.length ? investigatorInsights.relationshipBars.map((item, index) => {
+                          const score = Math.round(investigatorInsights.confidence(item) * 100);
+                          const isStrongest = investigatorInsights.strongestRelationships?.some(
+                            (strongest) => strongest === item
+                          );
+                          return <div className={`relationship-bar-row ${isStrongest ? "strongest-relationship-row" : ""}`} key={`${investigatorInsights.getA(item)}-${investigatorInsights.getB(item)}-${index}`}><div className="relationship-bar-label"><span>{investigatorInsights.getA(item)} ↔ {investigatorInsights.getB(item)} {isStrongest && <b className="strongest-label">STRONGEST</b>}</span><strong>{score}%</strong></div><div className="relationship-bar-track"><div className="relationship-bar-fill" style={{ width: `${Math.max(2, Math.min(score, 100))}%` }} /></div></div>;
+                        }) : <div className="assist-empty">Relationship strength will appear after candidate relationships are generated.</div>}
+                      </div>
+                      <div className="assist-subpanel">
+                        <div className="eyebrow">NEXT ACTIONS</div><h3>Investigator Recommendations</h3>
+                        {investigatorInsights.recommendations.map((recommendation, index) => <div className="recommendation-row" key={index}><span className="recommendation-icon">✓</span><span>{recommendation}</span></div>)}
+                      </div>
+                    </div>
+                  </section>
+                  </>
+                ) : (
+                  <TabEmpty title="No insights yet" actionLabel="Go to Sources" onAction={() => setActiveTab("sources")}>
+                    Run the intelligence analysis to rank relationships, surface the highest-risk lead and get recommended next steps.
+                  </TabEmpty>
+                )
+              )}
+
+              {/* ===== FIR INTELLIGENCE ===== */}
+              {activeTab === "fir" && (
+                <section className="panel utility-panel tab-narrow">
+                    <div className="section-header compact-header"><div><div className="eyebrow">NLP ENGINE</div><h2>Standalone FIR Intelligence</h2></div></div>
+                    <textarea className="utility-textarea" rows={7} value={firText} onChange={(e) => setFirText(e.target.value)} placeholder="Paste an additional FIR / report for focused entity extraction…" />
+                    <div className="utility-actions"><select value={sourceLanguage} onChange={(e) => setSourceLanguage(e.target.value)}><option value="en">English</option><option value="hi">Hindi</option><option value="pa">Punjabi</option></select><button className="primary-button" onClick={analyzeFIR} disabled={firAnalyzing}>{firAnalyzing ? "Analyzing…" : "Extract Entities"}</button></div>
+                    {firEntities.length > 0 && <div className="entity-list">{firEntities.map((entity, index) => <div className="entity-chip" key={`${entity.label}-${entity.text}-${index}`}><span>{entity.label}</span><strong>{entity.text}</strong></div>)}</div>}
+                </section>
+              )}
+
+              {/* ===== TIP ANALYSIS ===== */}
+              {activeTab === "tips" && (
+                <section className="panel utility-panel tab-narrow">
+                    <div className="section-header compact-header"><div><div className="eyebrow">INTELLIGENCE SEED</div><h2>Tip → Network</h2></div></div>
+                    <textarea className="utility-textarea" rows={7} value={tipText} onChange={(e) => setTipText(e.target.value)} placeholder="Enter a small tip or lead…" />
+                    <button className="primary-button" onClick={analyzeTip} disabled={tipAnalyzing}>{tipAnalyzing ? "Analyzing…" : "Analyze Tip"}</button>
+                    {tipResult && <pre className="tip-result">{JSON.stringify(tipResult, null, 2)}</pre>}
+                </section>
+              )}
+
+              {/* ===== EVIDENCE INTEGRITY (BLOCKCHAIN) ===== */}
+              {activeTab === "integrity" && (
+                <>
+      <section className="panel blockchain-panel">
+
+        <div className="section-header">
+          <div>
+            <div className="eyebrow">
+              EVIDENCE SECURITY
+            </div>
+
+            <h2>
+              🔐 Evidence Integrity & Blockchain
+            </h2>
+
+            <p>
+              Verify investigation evidence and blockchain
+              records for unauthorized modifications.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            className="primary-button"
+            onClick={verifyBlockchainIntegrity}
+            disabled={
+              blockchainLoading || !selected?.id
+            }
+          >
+            {blockchainLoading
+              ? "Verifying..."
+              : "🔄 Verify Integrity"}
+          </button>
+        </div>
+
+
+        {/* ERROR */}
+
+        {blockchainError && (
+
+          <div className="error-box main-error">
+
+            <span>
+              ❌ {blockchainError}
+            </span>
+
+          </div>
+
+        )}
+
+
+        {/* DEFAULT STATE */}
+
+        {!blockchainStatus &&
+          !blockchainError &&
+          !blockchainLoading && (
+
+            <div className="empty-state">
+
+              <div className="empty-icon">
+                🔐
               </div>
 
-              <div className="panel">
-                <div className="section-header compact-header"><div><div className="eyebrow">INTELLIGENCE SEED</div><h2>Tip → Network</h2></div></div>
-                <textarea className="utility-textarea" rows={7} value={tipText} onChange={(e) => setTipText(e.target.value)} placeholder="Enter a small tip or lead…" />
-                <button className="primary-button" onClick={analyzeTip} disabled={tipAnalyzing}>{tipAnalyzing ? "Analyzing…" : "Analyze Tip"}</button>
-                {tipResult && <pre className="tip-result">{JSON.stringify(tipResult, null, 2)}</pre>}
-              </div>
-            </section>
+              <strong>
+                Blockchain verification not run
+              </strong>
 
-            <section className="panel methodology-panel">
-              <div><div className="eyebrow">ANALYTICAL GUARDRAILS</div><h2>How NyayaNet interprets evidence</h2></div>
-              <div className="guardrail-grid"><div><strong>Candidate relationship score</strong><p>Ranks evidence-backed links using observable communication, transaction, meeting and shared-entity signals.</p></div><div><strong>Suspicious pattern detection</strong><p>Flags unusual combinations of activity for investigator review; it does not declare guilt.</p></div><div><strong>Network influence</strong><p>Uses graph-centrality measures to identify structurally influential nodes, not “most criminal” people.</p></div></div>
-            </section>
+              <p>
+                Verify the evidence chain to ensure
+                investigation data has not been modified.
+              </p>
+
+            </div>
+
+          )}
+
+
+        {/* LOADING */}
+
+        {blockchainLoading && (
+
+          <div className="empty-state">
+
+            <div className="empty-icon">
+              ⏳
+            </div>
+
+            <strong>
+              Verifying Blockchain...
+            </strong>
+
+            <p>
+              Checking evidence hashes and
+              blockchain integrity.
+            </p>
+
+          </div>
+
+        )}
+
+
+        {/* RESULT */}
+
+        {blockchainStatus && (
+
+          <>
+
+            {/* STATUS */}
+
+            <div
+              className={
+                blockchainStatus.valid
+                  ? "blockchain-status verified"
+                  : "blockchain-status invalid"
+              }
+            >
+
+              <div className="blockchain-status-icon">
+
+                {blockchainStatus.valid
+                  ? "🟢"
+                  : "🔴"}
+
+              </div>
+
+              <div>
+
+                <h3>
+
+                  {blockchainStatus.valid
+                    ? "Blockchain Verified"
+                    : "Integrity Violation Detected"}
+
+                </h3>
+
+                <p>
+                  {blockchainStatus.message}
+                </p>
+
+              </div>
+
+            </div>
+
+
+            {/* STATISTICS */}
+
+            <div className="stats-grid blockchain-stats">
+
+              <div className="stat-card">
+
+                <span>
+                  TOTAL BLOCKS
+                </span>
+
+                <strong>
+                  {blockchainStatus.total_blocks || 0}
+                </strong>
+
+                <small>
+                  evidence records secured
+                </small>
+
+              </div>
+
+
+              <div className="stat-card">
+
+                <span>
+                  VERIFIED BLOCKS
+                </span>
+
+                <strong>
+                  {blockchainStatus.verified_blocks || 0}
+                </strong>
+
+                <small>
+                  successfully validated
+                </small>
+
+              </div>
+
+
+              <div
+                className={
+                  blockchainStatus.tampering_detected
+                    ? "stat-card alert-stat"
+                    : "stat-card"
+                }
+              >
+
+                <span>
+                  EVIDENCE TAMPERING
+                </span>
+
+                <strong>
+
+                  {blockchainStatus.tampering_detected
+                    ? "YES"
+                    : "NO"}
+
+                </strong>
+
+                <small>
+
+                  {blockchainStatus.tampering_detected
+                    ? "unauthorized changes detected"
+                    : "no modification detected"}
+
+                </small>
+
+              </div>
+
+            </div>
+
+
+            {/* TAMPERED BLOCKS */}
+
+            {blockchainStatus.tampering_detected &&
+              blockchainStatus.tampered_blocks?.length > 0 && (
+
+                <div className="tampered-evidence">
+
+                  <div className="section-header">
+
+                    <div>
+
+                      <div className="eyebrow">
+                        SECURITY ALERT
+                      </div>
+
+                      <h3>
+                        ⚠️ Tampered Evidence Detected
+                      </h3>
+
+                    </div>
+
+                  </div>
+
+
+                  {blockchainStatus.tampered_blocks.map(
+                    (block, index) => (
+
+                      <div
+                        className="tampered-item"
+                        key={
+                          `${block.evidence_id}-${index}`
+                        }
+                      >
+
+                        <div>
+
+                          <strong>
+
+                            {block.title ||
+                              block.source_type ||
+                              "Unknown Evidence"}
+
+                          </strong>
+
+
+                          <small>
+
+                            Evidence ID:
+                            {" "}
+                            {block.evidence_id}
+
+                          </small>
+
+
+                          <small>
+
+                            Source:
+                            {" "}
+                            {block.source_type}
+
+                          </small>
+
+                        </div>
+
+
+                        <div className="tamper-errors">
+
+                          {block.errors?.map(
+                            (error, errorIndex) => (
+
+                              <div
+                                key={errorIndex}
+                              >
+
+                                🔴 {error}
+
+                              </div>
+
+                            )
+                          )}
+
+                        </div>
+
+                      </div>
+
+                    )
+                  )}
+
+                </div>
+
+              )}
+
+          </>
+
+        )}
+
+      </section>
+                </>
+              )}
+
+              {/* ===== ANALYTICAL GUARDRAILS ===== */}
+              {activeTab === "guardrails" && (
+                <>
+                  <section className="panel methodology-panel">
+                    <div><div className="eyebrow">ANALYTICAL GUARDRAILS</div><h2>How NyayaNet interprets evidence</h2></div>
+                    <div className="guardrail-grid"><div><strong>Candidate relationship score</strong><p>Ranks evidence-backed links using observable communication, transaction, meeting and shared-entity signals.</p></div><div><strong>Suspicious pattern detection</strong><p>Flags unusual combinations of activity for investigator review; it does not declare guilt.</p></div><div><strong>Network influence</strong><p>Uses graph-centrality measures to identify structurally influential nodes, not “most criminal” people.</p></div></div>
+                  </section>
+                </>
+              )}
+            </div>
           </>
         )}
       </main>
