@@ -26,6 +26,8 @@ COPY app ./app
 # Copy ML/data files if your backend requires them
 COPY data ./data
 
+COPY ml ./ml
+
 EXPOSE 8000
 
 CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT}"]
