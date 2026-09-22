@@ -11,3 +11,4 @@ numpy
 joblib
 networkx
 langdetect
+pypdf
