@@ -4,6 +4,6 @@ __pycache__/
 *.pyc
 .env
 .env.local
-node_modules/
+frontend/node_modules/
 dist/
 models/*.joblib
