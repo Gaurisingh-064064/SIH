@@ -53,7 +53,7 @@ def startup_check():
 
 
 ROOT = Path(__file__).resolve().parents[2]
-MODEL_DIR = ROOT / "ml"
+MODEL_DIR = ROOT/"backend"/ "ml"
 
 RELATIONSHIP_MODEL_PATH = MODEL_DIR / "relationship_model.joblib"
 # ANOMALY_MODEL_PATH = MODEL_DIR / "suspicious_pattern_model.joblib"
