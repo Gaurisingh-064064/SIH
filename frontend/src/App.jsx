@@ -1491,9 +1491,15 @@ let firLanguage = "en";
             <span className="eyebrow">AUTHORIZED ACCESS</span>
             <h1>{isSignup ? "Create Investigator Account" : "Secure Login"}</h1>
             <p>Investigative intelligence workspace for authorized personnel.
-            Use these credentials for testing:
+           </p> 
+           <p style={{ color: "red" }}>Use these credentials for testing:
+            <br />
             Email:- nyayanet@gmail.com
-            Password:- Nyayanet </p>
+            <br />
+            Password:- Nyayanet
+           </p>
+
+            
           </div>
           {error && <div className="error-box">{error}</div>}
           <form onSubmit={handleAuth} className="stack-form">
