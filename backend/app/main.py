@@ -52,7 +52,7 @@ def startup_check():
     print("==============================\n")
 
 
-ROOT = Path(__file__).resolve().parents[2]
+ROOT = Path(__file__).resolve().parents[1]
 MODEL_DIR = ROOT / "ml"
 
 RELATIONSHIP_MODEL_PATH = MODEL_DIR / "relationship_model.joblib"
